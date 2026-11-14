@@ -32,9 +32,13 @@ import {
 const DATA = "data/herdr-agent-diagram";
 const PER_PAGE = 2;
 const MAX_SCALE = 1.6; // fitted diagrams grow at most this much
-const MAX_ZOOM = 3; // the CLI rasterises at 4x the logical size; past ~3x it blurs on retina
+const MAX_ZOOM = 3; // the CLI rasterises at 4x the logical size; past ~3x on screen (x app zoom) it blurs on retina
 const STEP = 80; // px per pan button press
 const HEAD = 28; // a pin's title row plus gap
+
+// Herdr multiplies .left()/.w() by the app zoom but reports pointer positions, scroll deltas and sizes unzoomed:
+// divide those by this once, where they come in.
+const appZoom = () => settings()?.zoom || 1;
 
 // Pele's SVG uses var(--pele-x, default) for colors and font. GPUI's rasteriser has no CSS
 // variables (and ignores the root style's font), so resolve them to the theme and stamp the font on every text.
@@ -210,7 +214,7 @@ export default class DiagramPopup extends View {
       delete this.view[id];
       return;
     }
-    const z = Math.max(Math.min(q.fit, 0.2), Math.min(MAX_ZOOM, q.scale * f));
+    const z = Math.max(Math.min(q.fit, 0.2), Math.min(MAX_ZOOM / appZoom(), q.scale * f));
     const k = z / q.scale;
     const ax = cx0 ?? q.W / 2;
     const ay = cy0 ?? q.H / 2;
@@ -320,13 +324,20 @@ export default class DiagramPopup extends View {
           .on_mouse_move((e, cx) => {
             const d = this.drag;
             if (!d || d.id !== p.id) return;
-            this.view[p.id] = { z: this.pos[p.id].scale, x: d.x + e.position.x - d.px, y: d.y + e.position.y - d.py };
+            const z = appZoom();
+            this.view[p.id] = {
+              z: this.pos[p.id].scale,
+              x: d.x + (e.position.x - d.px) / z,
+              y: d.y + (e.position.y - d.py) / z,
+            };
             cx.notify();
           })
           .on_scroll_wheel((e, cx) => {
+            const z = appZoom();
             if (e.modifiers?.platform || e.modifiers?.control) {
-              this.zoom(p.id, Math.exp(-e.delta.y / 300), e.local_position?.x, e.local_position?.y);
-            } else this.pan(p.id, e.delta.x, e.delta.y);
+              const at = e.local_position;
+              this.zoom(p.id, Math.exp(-e.delta.y / 300), at && at.x / z, at && at.y / z);
+            } else this.pan(p.id, e.delta.x / z, e.delta.y / z);
             cx.stop_propagation();
             cx.notify();
           })
@@ -346,8 +357,7 @@ export default class DiagramPopup extends View {
     if (!maxPin) this.max = null;
     const shown = maxPin ? [maxPin] : cur ? cur.pins.slice(this.page * PER_PAGE, (this.page + 1) * PER_PAGE) : [];
     const gap = 14;
-    // on_size_change reports unzoomed px while .w()/.h() get multiplied by the app zoom: convert to the latter
-    const zoom = settings()?.zoom || 1;
+    const zoom = appZoom();
     const box = { width: this.box.width / zoom, height: this.box.height / zoom };
     const W = Math.max(200, box.width - 8);
     const n = Math.max(1, shown.length);

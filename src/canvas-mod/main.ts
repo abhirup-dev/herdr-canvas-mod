@@ -4,8 +4,9 @@
 // Mouse: drag with the selection tool, scroll to pan, cmd/ctrl-scroll to zoom, space-drag or the hand to pan.
 // Keys: Excalidraw's (1-8/0 or letters for tools, backspace, cmd-z / cmd-shift-z, cmd-a, ctrl-d duplicate,
 // arrows nudge), + / - zoom, shift-1 fit (and keep fitting as the scene changes), shift-0 100%, f frame HUD.
-// Units: camera offsets and .left()/.w() are logical px (the app zoom multiplies them); paths are built in
-// device px (scale = camera zoom x app zoom); pointer positions arrive in device px.
+// Units: everything the mod draws is logical px (zoom-1 px): camera offsets, .left()/.w(), text and paint_path
+// geometry; Herdr multiplies all of it by the app zoom. Pointer positions, scroll deltas and sizes arrive
+// unzoomed, so they are divided by the app zoom once, where they come in.
 import { InputState, type InputState as InputStateT, Textarea, TextareaState } from "gpui-base";
 import { type Context, div, type Element, type FocusHandle, View } from "gpui-kit";
 import { layout, props as paneProps, settings, theme } from "herdr";
@@ -277,7 +278,7 @@ export default class ExcalCanvas extends View {
 
   /** Cached native paths for `e`: rebuilt when its paths, the zoom or its stretch changed. */
   private paths(e: CanvasElement): BuiltElement {
-    const scale = this.camera.zoom * appZoom();
+    const scale = this.camera.zoom; // Herdr applies the app zoom to paint_path itself
     const src = this.paintsOf(e);
     const size = this.paintSize.get(src);
     const sx = size && size.w > 0.5 ? Math.round((e.width / size.w) * 1000) / 1000 : 1;
@@ -600,7 +601,7 @@ export default class ExcalCanvas extends View {
         if (e.modifiers.platform || e.modifiers.control) {
           const at = this.local(e);
           this.camera = zoomAt(this.camera, Math.exp(-e.delta.y / 300), [at.x, at.y]);
-        } else this.camera = pan(this.camera, e.delta.x, e.delta.y);
+        } else this.camera = pan(this.camera, e.delta.x / z, e.delta.y / z);
         cx.stop_propagation();
         cx.notify();
       })

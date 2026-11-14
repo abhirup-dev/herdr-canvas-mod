@@ -27,13 +27,13 @@ export interface BuiltElement {
   readonly sy: number;
 }
 
-/** Rotation about the element centre plus the shift and scale into device px. Plain fields, read inline. */
+/** Rotation about the element centre plus the shift and scale into logical px. Plain fields, read inline. */
 interface Xform {
   readonly cos: number;
   readonly sin: number;
   readonly cx: number;
   readonly cy: number;
-  /** Device-space origin offset (element local units, before scaling). */
+  /** Origin offset (element local units, before scaling). */
   ox: number;
   oy: number;
   readonly scale: number;
@@ -97,7 +97,7 @@ function trace(b: PathBuilder, p: Paint, t: Xform): void {
 }
 
 /**
- * Builds an element's paths at `scale` device px per world unit (camera zoom x app zoom). Points are rotated
+ * Builds an element's paths at `scale` logical px per world unit (the camera zoom; Herdr adds the app zoom). Points are rotated
  * about the element centre as Excalidraw does, then shifted so none is negative (an arrow pointing left has
  * negative points); the shift is reported in world units for positioning.
  */
