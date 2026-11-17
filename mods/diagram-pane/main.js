@@ -12,6 +12,7 @@ import { h_flex } from "gpui-base";
 import { div, View } from "gpui-kit";
 import {
   appHome,
+  checking,
   exec,
   home,
   openOverlay,
@@ -38,7 +39,9 @@ function modLogger(name) {
   let again = false;
   let loaded = false;
   // Async work in a mod runs through a view's cx.spawn: lines wait until a view lends its cx (log.use).
-  let cx = null;
+  // Module code outlives the copies (Herdr 0.1.14+), so a closed copy's cx must not be used: each live copy lends its
+  // own and takes it back in close(). The newest lender writes.
+  const lenders = [];
   const write = async () => {
     if (writing) {
       again = true;
@@ -64,15 +67,27 @@ function modLogger(name) {
     }
   };
   const flush = () => {
-    if (cx) cx.spawn(write);
+    if (checking()) return; // herdr-app check: no file writes
+    for (let lender = lenders.at(-1); lender; lender = lenders.at(-1)) {
+      try {
+        lender.spawn(write);
+        return;
+      } catch {
+        lenders.pop(); // a copy that closed without returning its cx
+      }
+    }
   };
   const log = (msg) => {
     lines.push(`${new Date().toISOString()} app mod-${name} info  ${msg}`);
     flush();
   };
   log.use = (viewCx) => {
-    cx = viewCx;
+    lenders.push(viewCx);
     flush();
+    return () => {
+      const i = lenders.indexOf(viewCx);
+      if (i >= 0) lenders.splice(i, 1);
+    };
   };
   return log;
 }
@@ -85,7 +100,7 @@ const safeId = (id) => String(id).replace(/[^A-Za-z0-9_-]/g, "_");
  * terminals (a remote agent's canvas or pins show here). All header instances share one JS realm.
  */
 function startSidecarForRemotes(cx) {
-  if (globalThis.__herdrDrawRemotes) return;
+  if (globalThis.__herdrDrawRemotes || checking()) return;
   globalThis.__herdrDrawRemotes = true;
   cx.spawn(async () => {
     const text = await readTextFile(`${appHome()}/data/herdr-draw/install.json`);
@@ -103,7 +118,7 @@ function startSidecarForRemotes(cx) {
 export default class Pane extends View {
   init(_props, cx) {
     this.state = null;
-    log.use(cx);
+    this.unlog = log.use(cx);
     startSidecarForRemotes(cx);
     const terminal = props()?.terminal;
     if (!terminal) return;
@@ -115,9 +130,14 @@ export default class Pane extends View {
       await this.load(cx);
       for (;;) {
         const changed = await watchFolder(root);
-        if (changed.some((p) => p.includes(`/${terminal}/`))) await this.load(cx);
+        // A batch holding the root itself means "refresh everything" (Herdr 0.1.15+).
+        if (changed.some((p) => p === root || p.includes(`/${terminal}/`))) await this.load(cx);
       }
     });
+  }
+
+  close() {
+    this.unlog?.();
   }
 
   async load(cx) {

@@ -67,7 +67,7 @@ herdr-draw mermaid ls
 
 The header shows `◫ 1`, glowing. Click it, or `herdr-app do mod.open --name diagram-popup`
 (opens for the focused pane). Each diagram is fitted to its viewport; its toolbar zooms
-(− + fit 1:1), pans (← ↑ ↓ →) and maximises. Drag or scroll pans, ⌘/ctrl-scroll zooms,
+(− + fit 1:1), pans (← ↑ ↓ →) and maximises. Drag or scroll pans, pinch zooms,
 double-click maximises. Keys: `←`/`→` pages, `↑`/`↓` or `1`-`9` tabs, `+` `-` `0` zoom/fit,
 `f` maximise (arrows then pan), `Esc` restores, then closes.
 
@@ -131,11 +131,12 @@ For a remote board, read both sides: the laptop's `sidecar` (`relay:` and `bridg
 - `mods/diagram-pane/`: clone of Herdr's shipped `pane` header plus the badge.
 - `mods/diagram-popup/`: the viewer.
 - `skills/herdr-canvas-mod/`: the agent skill; `SKILL.md` routes to `references/mermaid.md` (pins) or `references/canvas.md` (live canvas).
-- `scratch/anim-spike.mjs`: the animated-GIF experiment (negative result, see below).
 
 ## Known limits (POC)
 
-- Local machine only. Remote terminals (`vps/t7`) are refused by the CLI.
+- Needs Herdr 0.1.16 or newer (the mods use `on_pinch` and `checking()`).
+- Herdr stops mod code that runs too long, without a message: about 50 ms per render, 500 ms per event
+  handler, 5 s per detached task (`sandbox.rs` in herdr-app, not documented upstream). Heavy work goes to the sidecar.
 - The SVG text font is the nearest installed sans (Helvetica Neue), not Herdr's
   bundled Geist: GPUI's SVG rasteriser only sees installed fonts.
 - Animations: Pele only marks animated edges (dash pattern + class, usecase and

@@ -63,7 +63,7 @@ Decided 2026-10-31. One package and CLI, `herdr-draw`, for both kinds of visual:
    stdin/stdout pipe over Herdr's own machine link. Ids are machine-qualified (`vpsme/t1f`), and E2's
    protocol should use them from the start so local and remote share one code path.
 
-   **Bridge spike (hd-jf3.7.1, 2026-10-31, laptop to vpsme, `scripts/bridge-spike.ts`).**
+   **Bridge spike (hd-jf3.7.1, 2026-10-31, laptop to vpsme; the script `scripts/bridge-spike.ts` is in git history before its removal).**
    Chosen: an hc terminal stream. `hc run --on <m> --name <n>` starts the remote endpoint with its tty
    raw (`stty raw -echo`), and the relay runs `hc attach <m>/<n>` under a pseudo-terminal (Bun's
    built-in `Bun.Terminal`, so no python or `script`). It is Herdr-native: no extra configuration,

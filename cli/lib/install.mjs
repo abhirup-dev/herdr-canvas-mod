@@ -19,8 +19,6 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(SRC, "package.json"), "utf8
 const HOME = os.homedir();
 const MODS = ["diagram-pane", "diagram-popup", "excal-canvas"];
 const SKILLS = ["herdr-canvas-mod"];
-/** Names earlier versions installed: their links are removed on install and uninstall. */
-const OLD_SKILLS = ["herdr-canvas", "herdr-diagram"];
 /** Where each agent reads personal skills from. */
 const AGENTS = {
   claude: { bin: "claude", skills: ".claude/skills" },
@@ -163,22 +161,11 @@ const ourLink = (link, name) => {
   }
 };
 
-/** Removes links to skills under their old names (they now dangle: the folder was renamed). */
-function removeOldLinks(dir) {
-  for (const s of OLD_SKILLS) {
-    const link = path.join(dir, s);
-    try {
-      if (fs.readlinkSync(link).endsWith(`/skills/${s}`)) fs.unlinkSync(link);
-    } catch {}
-  }
-}
-
 function linkSkills(agents) {
   const done = [];
   for (const a of agents) {
     const dir = path.join(HOME, AGENTS[a].skills);
     fs.mkdirSync(dir, { recursive: true });
-    removeOldLinks(dir);
     for (const s of SKILLS) {
       const link = path.join(dir, s);
       const cur = fs.lstatSync(link, { throwIfNoEntry: false });
@@ -389,7 +376,6 @@ function removeLocal(env, headless) {
   const cli = path.join(binDir(), "herdr-draw");
   if (fs.existsSync(cli) && fs.readFileSync(cli, "utf8").includes("herdr-draw")) fs.unlinkSync(cli);
   for (const a of Object.values(AGENTS)) {
-    removeOldLinks(path.join(HOME, a.skills));
     for (const s of SKILLS) {
       const link = path.join(HOME, a.skills, s);
       if (ourLink(link, s)) fs.unlinkSync(link);

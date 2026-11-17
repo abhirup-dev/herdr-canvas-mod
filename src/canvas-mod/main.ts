@@ -1,7 +1,7 @@
 // excal-canvas: a native Excalidraw editor for Herdr. Draws the scene the canvas sidecar serves (Excalidraw
 // elements from the SDK, plus roughjs paths the sidecar generates) natively, and edits it: tools, selection,
 // move/resize, text, styles, undo. Edits go to the sidecar as ops; it writes them to the canvas server.
-// Mouse: drag with the selection tool, scroll to pan, cmd/ctrl-scroll to zoom, space-drag or the hand to pan.
+// Mouse: drag with the selection tool, scroll to pan, pinch to zoom, space-drag or the hand to pan.
 // Keys: Excalidraw's (1-8/0 or letters for tools, backspace, cmd-z / cmd-shift-z, cmd-a, ctrl-d duplicate,
 // arrows nudge), + / - zoom, shift-1 fit (and keep fitting as the scene changes), shift-0 100%, f frame HUD.
 // Units: everything the mod draws is logical px (zoom-1 px): camera offsets, .left()/.w(), text and paint_path
@@ -91,13 +91,14 @@ export default class ExcalCanvas extends View {
   private focus: FocusHandle | null = null;
   private hexInput: InputStateT | null = null;
   private text: { readonly id: string; readonly state: TextareaState } | null = null;
+  private unlog: (() => void) | null = null;
 
   override init(props: unknown, cx: Context): void {
     // pane.split {mod, props: {board, port}}: Herdr hands a mod pane its props through herdr's props().
     const p = { ...(paneProps() ?? {}), ...((props ?? {}) as object) } as { board?: unknown; port?: unknown };
     if (typeof p.board === "string" && p.board) this.board = p.board;
     if (typeof p.port === "number") this.port = p.port;
-    log.use(cx);
+    this.unlog = log.use(cx);
     this.focus = cx.focus_handle();
     const hexInput = InputState.new({ placeholder: "1e1e1e" });
     hexInput.on("submit", (_e, cx) => {
@@ -504,6 +505,10 @@ export default class ExcalCanvas extends View {
       .child(`${this.link} · ${n} element${n === 1 ? "" : "s"} ${this.failure ? ` · ${this.failure}` : ""}`);
   }
 
+  override close(): void {
+    this.unlog?.();
+  }
+
   override render(cx: Context): Element {
     try {
       return this.view(cx);
@@ -596,12 +601,16 @@ export default class ExcalCanvas extends View {
       })
       .on_scroll_wheel((e, cx) => {
         this.autoFit = false;
-        // Excalidraw's flow: a two-finger swipe pans, cmd/ctrl + swipe zooms (fingers up zooms in). Herdr gives
-        // no pinch scale, so pinch can't zoom. GPUI deltas already follow the fingers.
-        if (e.modifiers.platform || e.modifiers.control) {
-          const at = this.local(e);
-          this.camera = zoomAt(this.camera, Math.exp(-e.delta.y / 300), [at.x, at.y]);
-        } else this.camera = pan(this.camera, e.delta.x / z, e.delta.y / z);
+        // Scrolling (a two-finger swipe) always pans; zoom is pinch (on_pinch) or the toolbar and keys.
+        // GPUI deltas already follow the fingers.
+        this.camera = pan(this.camera, e.delta.x / z, e.delta.y / z);
+        cx.stop_propagation();
+        cx.notify();
+      })
+      .on_pinch((e, cx) => {
+        this.autoFit = false;
+        const at = this.local(e);
+        this.camera = zoomAt(this.camera, 1 + e.delta, [at.x, at.y]);
         cx.stop_propagation();
         cx.notify();
       })

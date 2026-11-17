@@ -15,6 +15,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { div, image, View } from "gpui-kit";
 import {
   appHome,
+  checking,
   closeOverlay,
   focused,
   fonts,
@@ -72,7 +73,9 @@ function modLogger(name) {
   let again = false;
   let loaded = false;
   // Async work in a mod runs through a view's cx.spawn: lines wait until a view lends its cx (log.use).
-  let cx = null;
+  // Module code outlives the copies (Herdr 0.1.14+), so a closed copy's cx must not be used: each live copy lends its
+  // own and takes it back in close(). The newest lender writes.
+  const lenders = [];
   const write = async () => {
     if (writing) {
       again = true;
@@ -98,15 +101,27 @@ function modLogger(name) {
     }
   };
   const flush = () => {
-    if (cx) cx.spawn(write);
+    if (checking()) return; // herdr-app check: no file writes
+    for (let lender = lenders.at(-1); lender; lender = lenders.at(-1)) {
+      try {
+        lender.spawn(write);
+        return;
+      } catch {
+        lenders.pop(); // a copy that closed without returning its cx
+      }
+    }
   };
   const log = (msg) => {
     lines.push(`${new Date().toISOString()} app mod-${name} info  ${msg}`);
     flush();
   };
   log.use = (viewCx) => {
-    cx = viewCx;
+    lenders.push(viewCx);
     flush();
+    return () => {
+      const i = lenders.indexOf(viewCx);
+      if (i >= 0) lenders.splice(i, 1);
+    };
   };
   return log;
 }
@@ -114,7 +129,7 @@ const log = modLogger("diagram-popup");
 
 export default class DiagramPopup extends View {
   init(_props, cx) {
-    log.use(cx);
+    this.unlog = log.use(cx);
     this.state = null;
     this.ready = {}; // pin id -> themed svg path (relative to app home)
     this.tab = 0;
@@ -136,7 +151,9 @@ export default class DiagramPopup extends View {
       // Watch the parent: the terminal's folder may not exist until the first pin. Ignore our own themed copies.
       for (;;) {
         const changed = await watchFolder(root);
-        if (changed.some((p) => p.includes(`/${this.terminal}/`) && !/\.[a-z0-9]+\.svg$/.test(p))) await this.load(cx);
+        // A batch holding the root itself means "refresh everything" (Herdr 0.1.15+).
+        if (changed.some((p) => p === root || (p.includes(`/${this.terminal}/`) && !/\.[a-z0-9]+\.svg$/.test(p))))
+          await this.load(cx);
       }
     });
   }
@@ -201,7 +218,12 @@ export default class DiagramPopup extends View {
     if (changed) cx.notify();
   }
 
+  // Herdr's teardown hook; the user-facing close is dismiss().
   close() {
+    this.unlog?.();
+  }
+
+  dismiss() {
     const id = props()?.overlay;
     if (id) closeOverlay(id);
   }
@@ -333,11 +355,16 @@ export default class DiagramPopup extends View {
             cx.notify();
           })
           .on_scroll_wheel((e, cx) => {
+            // Scrolling always pans; zoom is pinch, the toolbar or the keys (as on the canvas).
             const z = appZoom();
-            if (e.modifiers?.platform || e.modifiers?.control) {
-              const at = e.local_position;
-              this.zoom(p.id, Math.exp(-e.delta.y / 300), at && at.x / z, at && at.y / z);
-            } else this.pan(p.id, e.delta.x / z, e.delta.y / z);
+            this.pan(p.id, e.delta.x / z, e.delta.y / z);
+            cx.stop_propagation();
+            cx.notify();
+          })
+          .on_pinch((e, cx) => {
+            const z = appZoom();
+            const at = e.local_position;
+            this.zoom(p.id, 1 + e.delta, at && at.x / z, at && at.y / z);
             cx.stop_propagation();
             cx.notify();
           })
@@ -427,7 +454,7 @@ export default class DiagramPopup extends View {
             cx.stop_propagation();
             return cx.notify();
           }
-          return this.close();
+          return this.dismiss();
         }
         if (this.max && ["left", "right", "up", "down"].includes(k)) {
           const d = { left: [STEP, 0], right: [-STEP, 0], up: [0, STEP], down: [0, -STEP] }[k];
@@ -492,7 +519,7 @@ export default class DiagramPopup extends View {
               .text_size(11)
               .text_color(t.dim)
               .hover((s) => s.bg(t.hover).text_color(t.foreground))
-              .on_click(() => this.close())
+              .on_click(() => this.dismiss())
               .child("Esc"),
           ),
       )
