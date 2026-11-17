@@ -10,7 +10,6 @@
 import * as fs from "fs/promises";
 import { h_flex } from "gpui-base";
 import { div, View } from "gpui-kit";
-import { withAsk } from "./ask.js";
 import {
   appHome,
   checking,
@@ -119,7 +118,6 @@ function startSidecarForRemotes(cx) {
 export default class Pane extends View {
   init(_props, cx) {
     this.state = null;
-    this.askFocus = cx.focus_handle();
     this.unlog = log.use(cx);
     startSidecarForRemotes(cx);
     const terminal = props()?.terminal;
@@ -222,12 +220,12 @@ export default class Pane extends View {
       .child(String(count));
   }
 
-  render(cx) {
+  render() {
     const { pane, terminal } = props() ?? {};
     const t = theme();
     const badges = terminal ? [this.canvasBadge(t, pane, terminal), this.badge(t, pane, terminal)].filter(Boolean) : [];
     // The strip is drawn over the terminal: barely tinted, so only the badges stand out.
-    const strip = h_flex()
+    return h_flex()
       .size_full()
       .justify_end()
       .items_center()
@@ -235,7 +233,5 @@ export default class Pane extends View {
       .px(6)
       .bg(t.background + "1a")
       .children(badges);
-    // Cmd+W's "Close this pane?" card (confirm-pane-close in herdr-mods names the pane).
-    return withAsk(this, strip, pane, t, cx);
   }
 }
