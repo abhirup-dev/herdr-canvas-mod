@@ -5,6 +5,7 @@
     "src/sidecar/main.ts",
     "src/bridge/endpoint.ts",
     "src/board/cli.ts",
+    "src/board/file-cli.ts",
     "cli/*.mjs",
     "scripts/*.ts",
     "mods/*/main.js",

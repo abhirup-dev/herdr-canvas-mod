@@ -245,7 +245,7 @@ export function expandElementsForExport(sourceElements, options = {}) {
             arr.push({ type: 'arrow', id: el.id });
             shapeBoundArrows.set(el.startBinding.elementId, arr);
         }
-        if (el.endBinding?.elementId) {
+        if (el.endBinding?.elementId && el.endBinding.elementId !== el.startBinding?.elementId) {
             const arr = shapeBoundArrows.get(el.endBinding.elementId) || [];
             arr.push({ type: 'arrow', id: el.id });
             shapeBoundArrows.set(el.endBinding.elementId, arr);
@@ -253,17 +253,10 @@ export function expandElementsForExport(sourceElements, options = {}) {
     }
     for (const el of cleanedExportElements) {
         const arrowBindings = shapeBoundArrows.get(el.id);
-        if (arrowBindings) {
-            // Skip refs the element already carries (re-exported expanded scenes),
-            // otherwise every export cycle appends duplicate boundElements entries.
-            const existing = new Set((Array.isArray(el.boundElements) ? el.boundElements : []).map((b) => b?.id));
-            const additions = arrowBindings.filter(b => !existing.has(b.id));
-            if (additions.length > 0) {
-                el.boundElements = [
-                    ...(Array.isArray(el.boundElements) ? el.boundElements : []),
-                    ...additions
-                ];
-            }
+        if (arrowBindings || Array.isArray(el.boundElements)) {
+            // Rebuild imported arrow backlinks from the current endpoints.
+            const nonArrowRefs = Array.isArray(el.boundElements) ? el.boundElements.filter(b => b?.type !== 'arrow') : [];
+            el.boundElements = [...nonArrowRefs, ...(arrowBindings ?? [])];
         }
     }
     // Append all bound text elements after their parents

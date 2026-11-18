@@ -3,8 +3,9 @@
 Pins live next to your terminal in the Herdr app: a badge in the pane header shows how many there are
 and glows until the user opens them; clicking it opens a popup with tabs and pages.
 
-Any Mermaid type works (flowchart, sequence, state, class, ER, gantt, ...). Rendering is Pele, not
-Mermaid.js: same syntax, its own layout. It refuses what it can't draw (exit 1 with the reason).
+Pele renders pins from supported Mermaid source, including flowcharts, sequence, state, class, ER,
+and Gantt diagrams. A parse or rendering failure exits 1 with the reason. For an editable canvas,
+use [structured diagrams](visual-formats-structured.md).
 
 Group pins in tabs by topic (`--tab "Auth flow"`; the default is "Diagrams"). Change a pin with
 `replace` (same id, same tab) rather than adding a copy, and `remove` pins that no longer apply.
@@ -33,5 +34,5 @@ herdr-draw mermaid clear                                   # remove every pin of
 
 Input is bare Mermaid, or Markdown with a `# Title` and a ```mermaid fence (the heading becomes the title).
 
-Another skill wrote a `chart.mmd` (for example `/statechart`)? Pin it too:
+To pin a `chart.mmd` from another skill:
 `herdr-draw mermaid add --tab "State chart" <out>/chart.mmd`.

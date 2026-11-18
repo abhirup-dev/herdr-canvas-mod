@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fit, toScreen, toWorld, zoomAt } from "../src/canvas/camera.ts";
-import { elementPaints, isTransparent, withOpacity } from "../src/canvas/shape.ts";
+import { isTransparent } from "../src/canvas/color.ts";
+import { elementPaints, withOpacity } from "../src/canvas/shape.ts";
 import type { CanvasElement, LinearElement, ShapeElement } from "../src/canvas/types.ts";
 
 const base = {

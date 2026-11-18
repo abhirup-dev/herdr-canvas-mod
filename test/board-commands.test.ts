@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { run } from "../src/board/cli.ts";
 import { handle } from "../src/board/http.ts";
 import { labelOverflowWarnings } from "../src/board/overflow.ts";
@@ -160,7 +163,7 @@ const boardUrl = `http://127.0.0.1:${
   Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => handle(boards, req) }).port
 }/b/board-test`;
 
-async function cli(args: string[], stdin?: string) {
+async function cli(args: string[], stdin?: string, url = boardUrl) {
   let out = "";
   let err = "";
   const stdout = process.stdout.write;
@@ -174,7 +177,7 @@ async function cli(args: string[], stdin?: string) {
     return true;
   }) as typeof process.stderr.write;
   try {
-    const code = await run(args, { url: boardUrl, ...(stdin === undefined ? {} : { stdin: async () => stdin }) });
+    const code = await run(args, { url, ...(stdin === undefined ? {} : { stdin: async () => stdin }) });
     return { code, out, err };
   } finally {
     process.stdout.write = stdout;
@@ -210,6 +213,103 @@ test.serial("add and apply of an existing id exit 2 and leave the element", asyn
   expect(got.code).toBe(0);
   expect(JSON.parse(got.out)).toMatchObject({ id: "api", type: "rectangle", x: 0, label: { text: "API" } });
 });
+
+test.serial("block commands preserve Mermaid source through file and snapshot round trips", async () => {
+  const source = "sequenceDiagram\nparticipant API\nparticipant Auth\nAPI->>Auth: Validate";
+  const revised = `${source}\nAuth-->>API: OK`;
+  expect((await cli(["block", "put", "auth", "-", "--at", "120,-35"], source)).code).toBe(0);
+  expect((await cli(["block", "source", "auth"])).out.trim()).toBe(source);
+  const exported = await cli(["export"]);
+  expect(exported.code).toBe(0);
+  expect(JSON.parse(exported.out).herdrDraw.blocks[0]).toMatchObject({ id: "auth", x: 120, y: -35, source });
+  expect((await cli(["snapshot", "save", "block-original"])).code).toBe(0);
+  expect((await cli(["block", "move", "auth", "--at", "-250,60"])).code).toBe(0);
+  expect((await cli(["block", "put", "auth", "-"], revised)).code).toBe(0);
+  expect(JSON.parse((await cli(["block", "list"])).out)[0]).toMatchObject({ id: "auth", x: -250, y: 60 });
+  expect((await cli(["snapshot", "restore", "block-original"])).code).toBe(0);
+  expect((await cli(["block", "source", "auth"])).out.trim()).toBe(source);
+  expect((await cli(["import", "-", "--replace"], exported.out)).code).toBe(0);
+  expect((await cli(["block", "put", "auth", "-"], revised)).code).toBe(0);
+  const savedAgain = JSON.parse((await cli(["export"])).out);
+  expect(savedAgain.elements.filter((el: { text?: string }) => el.text === "Validate")).toHaveLength(1);
+  expect((await cli(["block", "detach", "auth"])).code).toBe(0);
+  expect(JSON.parse((await cli(["block", "list"])).out)).toEqual([]);
+  expect((await cli(["describe"])).out).toContain("Validate");
+});
+
+test.serial("block put is replayable, preserves manual edits on move, and rejects stale source", async () => {
+  const source = "flowchart LR\nA[Gateway] --> B[Cache]";
+  const revised = source.replace("Cache", "Database");
+  const created = await cli(["block", "put", "routing", "-", "--at", "80,100"], source);
+  expect(created.code).toBe(0);
+  expect(JSON.parse(created.out)).toMatchObject({ status: "created", block: { id: "routing", x: 80, y: 100 } });
+  const stored = JSON.parse((await cli(["block", "get", "routing"])).out);
+  const anchor = stored.members.find((id: string) => id.endsWith(":A"));
+  expect(stored.source).toBe(source);
+  expect((await cli(["update", anchor, "--set", '{"strokeColor":"#d000ff"}'])).code).toBe(0);
+  expect(JSON.parse((await cli(["block", "put", "routing", "-"], source)).out)).toEqual({
+    success: true,
+    status: "unchanged",
+    block: stored,
+  });
+  expect(JSON.parse((await cli(["block", "put", "routing", "-", "--at", "90,110"], source)).out)).toMatchObject({
+    status: "moved",
+    block: { ...stored, x: 90, y: 110 },
+  });
+  expect(JSON.parse((await cli(["get", anchor])).out).strokeColor).toBe("#d000ff");
+
+  const dir = mkdtempSync(join(tmpdir(), "herdr-block-source-"));
+  try {
+    const previous = join(dir, "before.mmd");
+    writeFileSync(previous, source);
+    const command = ["block", "put", "routing", "-", "--expect-source", previous];
+    expect(JSON.parse((await cli(command, revised)).out)).toMatchObject({ status: "updated" });
+    const stale = await cli(command, source);
+    expect(stale.code).toBe(1);
+    expect(stale.err).toContain("source changed");
+    expect((await cli(["block", "source", "routing"])).out).toBe(revised);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test.serial(
+  "a legacy sidecar still serves plain scenes and refuses a structured import before replacing anything",
+  async () => {
+    const legacy = new Registry(async () => []);
+    legacy.board("legacy").batch([rect()]);
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path.endsWith("/api/scene") || path.endsWith("/api/blocks"))
+          return Response.json(
+            { error: `Not found: ${req.method} ${path.slice("/b/legacy".length)}` },
+            { status: 404 },
+          );
+        return handle(legacy, req);
+      },
+    });
+    try {
+      const url = `http://127.0.0.1:${server.port}/b/legacy`;
+      expect((await cli(["describe"], undefined, url)).out).toContain("[api]");
+      const exported = await cli(["export"], undefined, url);
+      expect(exported.code).toBe(0);
+      expect(JSON.parse(exported.out).elements[0].id).toBe("api");
+      const structured = JSON.stringify({ elements: [], herdrDraw: { blocks: [{ id: "routing" }] } });
+      const refused = await cli(["import", "-", "--replace"], structured, url);
+      expect(refused.code).toBe(1);
+      expect(refused.err).toContain("predates Mermaid blocks");
+      expect([...legacy.board("legacy").elements.keys()]).toEqual(["api"]);
+      const plain = JSON.stringify({ elements: [rect({ id: "plain" })], herdrDraw: { blocks: [] } });
+      expect((await cli(["import", "-", "--replace"], plain, url)).code).toBe(0);
+      expect([...legacy.board("legacy").elements.keys()]).toEqual(["plain"]);
+    } finally {
+      server.stop();
+    }
+  },
+);
 
 test.serial("describe shows arrow endpoints and the frame name", async () => {
   expect(

@@ -2,7 +2,7 @@
 // history, and the mod sockets subscribed to it. Boards are created on first use (REST or subscribe) and live
 // in memory for the life of the process. The SDK conversion is injected, so this is unit-tested without it.
 import type { BoardInfo, Boards } from "../board/http.ts";
-import { Board } from "../board/store.ts";
+import { Board, type BoardChange, type DiagramBlock } from "../board/store.ts";
 import { type ClientMessage, frame, type ServerMessage, splitBoard } from "../canvas/protocol.ts";
 import type { CanvasElement } from "../canvas/types.ts";
 import { logger } from "../log/log.mjs";
@@ -13,7 +13,7 @@ const debug = logger("sidecar").debug;
 
 /** Writes a board to disk after it changes (src/sidecar/save.ts). */
 export interface Saver {
-  schedule(board: string, elements: () => readonly object[]): void;
+  schedule(board: string, elements: () => readonly object[], blocks?: () => readonly DiagramBlock[]): void;
 }
 
 /** Boards on other machines (src/sidecar/relay.ts). */
@@ -36,7 +36,11 @@ type Log = (msg: string) => void;
 class Live {
   readonly store = new Board(() => {
     void this.reconvert();
-    this.saver?.schedule(this.id, () => [...this.store.elements.values()]);
+    this.saver?.schedule(
+      this.id,
+      () => this.store.list(),
+      () => [...this.store.blocks.values()],
+    );
   });
   readonly viewers = new Set<Viewer>();
   readonly writer: Writer;
@@ -54,7 +58,7 @@ class Live {
     const s = this.store;
     this.writer = new Writer(
       {
-        create: async (el) => s.create(el),
+        create: async (el) => s.create(el, true),
         update: async (id, fields) => s.update(id, fields),
         remove: async (id) => s.remove(id),
         get: async (id) => s.elements.get(id) ?? null,
@@ -132,6 +136,14 @@ export class Registry implements Boards {
 
   board(id: string): Board {
     return this.get(id).store;
+  }
+
+  change(id: string, job: () => Promise<BoardChange | undefined>): Promise<void> {
+    return this.get(id).writer.applyChange(job);
+  }
+
+  reset<T>(id: string, job: () => T): Promise<T> {
+    return this.get(id).writer.reset(job);
   }
 
   info(id: string): BoardInfo {

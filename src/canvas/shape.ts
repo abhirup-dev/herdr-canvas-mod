@@ -8,10 +8,6 @@ import { absolutize, normalize, parsePath } from "path-data-parser";
 import type { Drawable, OpSet, ResolvedOptions } from "roughjs/bin/core";
 import type { CanvasElement, Paint, PathOp } from "./types.ts";
 
-/** Excalidraw's check: "transparent", #rgb0 or #rrggbb00. */
-export const isTransparent = (color: string): boolean =>
-  color === "transparent" || (color.length === 5 && color[4] === "0") || (color.length === 9 && color.endsWith("00"));
-
 /** Applies element opacity (0-100) to a #rgb/#rrggbb colour; other colour forms pass through. */
 export function withOpacity(color: string, opacity: number): string {
   if (opacity >= 100 || !color.startsWith("#")) return color;

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { handle } from "../src/board/http.ts";
+import { prepare } from "../src/board/render.ts";
+import { sceneFile } from "../src/board/scene-file.ts";
 import { Board } from "../src/board/store.ts";
 import { frame, isLocalBoardId, parseClientFrame, parseServerFrame, splitBoard } from "../src/canvas/protocol.ts";
 import type { CanvasElement } from "../src/canvas/types.ts";
@@ -29,6 +31,30 @@ describe("board store", () => {
     b.update("a", { x: 10 });
     expect(b.get("ar").x).toBe(118);
     expect(b.get("ar").version).toBe(2);
+  });
+
+  test("an imported arrow rebinds and disconnects in the saved scene", () => {
+    const board = new Board();
+    board.batch([
+      { id: "a", type: "rectangle", x: 0, y: 0, width: 100, height: 50 },
+      { id: "b", type: "rectangle", x: 200, y: 0, width: 100, height: 50 },
+      { id: "c", type: "rectangle", x: 400, y: 0, width: 100, height: 50 },
+      { id: "arrow", type: "arrow", x: 0, y: 0, start: { id: "a" }, end: { id: "b" } },
+    ]);
+    board.batch(sceneFile(board.list()).elements, true);
+    board.update("arrow", { end: { id: "c" } });
+    const reopened = new Board();
+    reopened.batch(sceneFile(board.list()).elements, true);
+    expect(reopened.get("arrow")).toMatchObject({
+      startBinding: { elementId: "a" },
+      endBinding: { elementId: "c" },
+    });
+    expect(reopened.get("b").boundElements).toEqual([]);
+    expect(reopened.get("c").boundElements).toEqual([{ id: "arrow", type: "arrow" }]);
+    reopened.update("arrow", { end: null });
+    reopened.batch(sceneFile(reopened.list()).elements, true);
+    expect(reopened.get("arrow").endBinding).toBeNull();
+    expect(reopened.get("c").boundElements).toEqual([]);
   });
 
   test("validates type and coordinates; unknown ids are 404", () => {
@@ -64,6 +90,54 @@ describe("board store", () => {
 });
 
 describe("board REST", () => {
+  test("regenerates one live block, reroutes external bindings and undoes the update as one step", async () => {
+    const boards = new Registry(async (raw) => (await prepare(raw)) as unknown as CanvasElement[]);
+    const boardId = "structured";
+    const store = boards.board(boardId);
+    const addr = `/b/${boardId}/api/blocks/auth`;
+    const source = "sequenceDiagram\nparticipant API\nparticipant Auth\nAPI->>Auth: Validate";
+    const { status } = await call(boards, "PUT", addr, { source, x: 300, y: 50 });
+    expect(status).toBe(200);
+    const target = store.block("auth").members.find((id) => id.endsWith(":Auth-top"))!;
+    expect(target).toBeTruthy();
+    store.batch([
+      { id: "manual", type: "rectangle", x: 0, y: 0, width: 100, height: 50 },
+      { id: "external", type: "arrow", x: 0, y: 0, start: { id: "manual" }, end: { id: target } },
+    ]);
+    const reopened = sceneFile(store.list(), [store.block("auth")]);
+    store.batch(reopened.elements, true, reopened.herdrDraw?.blocks);
+    const oldArrow = store.get("external");
+    expect(oldArrow.endBinding).toMatchObject({ elementId: target });
+    const manual = store.get("manual");
+
+    const invalid = await call(boards, "PUT", addr, { source: "not Mermaid" });
+    expect(invalid.status).toBe(400);
+    expect(store.block("auth").source).toBe(source);
+    expect(store.get("external")).toBe(oldArrow);
+
+    const updated = await call(boards, "PUT", addr, {
+      source: `${source}\nAuth-->>API: OK`,
+      x: 350,
+      y: 100,
+    });
+    expect(updated.status).toBe(200);
+    expect(store.block("auth").members).toContain(target);
+    expect(store.get("manual")).toBe(manual);
+    expect(store.get("external").points).not.toEqual(oldArrow.points);
+    expect(store.get("external").endBinding).toMatchObject({ elementId: target });
+
+    const viewer: Viewer = { send() {} };
+    await boards.onClient(viewer, boardId, { type: "undo" });
+    expect(store.block("auth").source).toBe(source);
+    expect(store.get("external")).toBe(oldArrow);
+    expect(store.get("manual")).toBe(manual);
+    await boards.onClient(viewer, boardId, { type: "redo" });
+    expect(store.block("auth").source).toContain("OK");
+    expect((await call(boards, "DELETE", addr)).status).toBe(200);
+    expect(store.list().map((el) => el.id)).toEqual(["manual", "external"]);
+    expect(store.get("external").endBinding).toBeNull();
+  });
+
   test("create, batch with shorthand label and arrow, update, delete, snapshot", async () => {
     const boards = registry();
     const created = await call(boards, "POST", "/b/t1/api/elements", {

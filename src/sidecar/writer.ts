@@ -1,6 +1,8 @@
 // Applies the mod's op batches to a board and keeps undo history. Inverses are computed from
 // the RAW server elements (which may be agent shorthand), not from the converted ones the mod sees, so undo
 // restores exactly what was there. Pure apart from the injected REST client, so it is unit-tested.
+
+import type { BoardChange } from "../board/store.ts";
 import type { ElementFields, Op } from "../canvas/protocol.ts";
 import type { RawElement } from "./diff.ts";
 
@@ -20,10 +22,12 @@ export interface Source {
   prepared(id: string): Readonly<Record<string, unknown>> | undefined;
 }
 
-interface Step {
+interface OpStep {
   readonly forward: readonly Op[];
   readonly inverse: readonly Op[];
 }
+
+type Step = OpStep | BoardChange;
 
 const LIMIT = 200;
 
@@ -42,17 +46,41 @@ export class Writer {
   apply(ops: readonly Op[]): Promise<void> {
     return this.enqueue(async () => {
       const step = await this.run(ops);
-      if (!step.forward.length) return;
-      this.undoStack.push(step);
-      if (this.undoStack.length > LIMIT) this.undoStack.shift();
-      this.redoStack.length = 0;
+      if (step.forward.length) this.record(step);
     });
+  }
+
+  applyChange(job: () => Promise<BoardChange | undefined>): Promise<void> {
+    return this.enqueue(async () => {
+      const change = await job();
+      if (change) this.record(change);
+    });
+  }
+
+  reset<T>(job: () => T): Promise<T> {
+    let result: T;
+    return this.enqueue(async () => {
+      result = job();
+      this.undoStack.length = 0;
+      this.redoStack.length = 0;
+    }).then(() => result);
+  }
+
+  private record(step: Step): void {
+    this.undoStack.push(step);
+    if (this.undoStack.length > LIMIT) this.undoStack.shift();
+    this.redoStack.length = 0;
   }
 
   undo(): Promise<void> {
     return this.enqueue(async () => {
       const step = this.undoStack.pop();
       if (!step) return;
+      if ("undo" in step) {
+        step.undo();
+        this.redoStack.push(step);
+        return;
+      }
       const back = await this.run(step.inverse);
       this.redoStack.push({ forward: step.forward, inverse: back.forward.length ? back.inverse : step.inverse });
     });
@@ -62,7 +90,10 @@ export class Writer {
     return this.enqueue(async () => {
       const step = this.redoStack.pop();
       if (!step) return;
-      this.undoStack.push(await this.run(step.forward));
+      if ("redo" in step) {
+        step.redo();
+        this.undoStack.push(step);
+      } else this.undoStack.push(await this.run(step.forward));
     });
   }
 
@@ -80,7 +111,7 @@ export class Writer {
   }
 
   /** Runs ops, returning what was actually done and its inverse (newest-first, so undo replays backwards). */
-  private async run(ops: readonly Op[]): Promise<Step> {
+  private async run(ops: readonly Op[]): Promise<OpStep> {
     const forward: Op[] = [];
     const inverse: Op[] = [];
     for (const op of ops) {
@@ -139,6 +170,10 @@ export class Writer {
     }
     const prev: Record<string, unknown> = {};
     for (const k of Object.keys(op.fields)) {
+      if (BINDINGS.has(k)) {
+        prev[k] = el[k] ?? null;
+        continue;
+      }
       // shortcut: a key the raw element lacks restores to its converted value; a truly absent key can't be
       // unset through the server's merge-PUT, so it stays (rare: editor keys always have converted values).
       const v = el[k] ?? converted?.[k];
@@ -190,13 +225,16 @@ export class Writer {
     const target = bound ?? container;
     if (!target) return null;
     const old = bound ? bound.text : (container?.label as { text?: unknown } | undefined)?.text;
-    const fields = bound ? { text: op.text, originalText: op.text } : { label: { text: op.text } };
+    const fields = bound
+      ? { text: op.text, originalText: op.text }
+      : { label: { ...(container?.label as object | undefined), text: op.text } };
     raw.set(target.id, await this.rest.update(target.id, fields));
     return { op, inverse: [{ op: "label", containerId: op.containerId, text: typeof old === "string" ? old : "" }] };
   }
 }
 
 const GEOMETRY = ["x", "y", "width", "height"] as const;
+const BINDINGS = new Set(["start", "end", "startBinding", "endBinding"]);
 
 interface Done {
   readonly op: Op;

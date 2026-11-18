@@ -85,14 +85,17 @@ or argument) exit 2.
 ```
 herdr-draw mermaid add [--tab NAME] [--title T] [file]   bare mermaid or markdown with a ```mermaid fence; stdin if no file
 herdr-draw mermaid replace <id> [--title T] [file]
+herdr-draw mermaid source <id>
 herdr-draw mermaid remove <id>
 herdr-draw mermaid check [file | id]                     render only: Pele errors, a PNG preview, readability warnings
 herdr-draw mermaid ls [--json]
 herdr-draw mermaid clear
+herdr-draw mermaid [convert] <file|-> --out <file|->    convert to editable .excalidraw, PNG or SVG
+herdr-draw render <file|-> --out <file|->               render an Excalidraw scene without opening a board
   --terminal <addr>   override $HC_TERMINAL_ID (testing)
 herdr-draw canvas open | start | status                  live Excalidraw canvas beside this terminal; status prints JSON health
 herdr-draw canvas <board command>                        add, apply, update, delete, get, query, describe, screenshot,
-                                                         export, import, snapshot, arrange, clear (herdr-draw canvas help)
+                                                         export, import, snapshot, arrange, block, clear (herdr-draw canvas help)
 herdr-draw open                                          the view for this terminal (for now: canvas open)
 herdr-draw install [-y|--yes] [--agents claude,pi,codex|none] [--machines a,b | --no-machines] [--headless]
 herdr-draw uninstall [-y] [--machines a,b]
@@ -109,6 +112,16 @@ commands), `HERDR_DRAW_DEBUG=0` (no debug log lines), `HERDR_DRAW_LOGS` and `HER
 
 The CLI parses with [cac](https://github.com/cacjs/cac), one program per group (`cli/lib/args.mjs`); the board
 commands keep their own table in `src/board/cli.ts`.
+
+For editable diagrams, put Mermaid into a named block with `herdr-draw canvas block put`.
+The [structured diagram guide](skills/herdr-canvas-mod/references/visual-formats-structured.md)
+shows guarded revisions and native edits on the same board.
+
+### Upgrading a running sidecar
+
+An older sidecar can continue to serve existing boards after an install. Export any live boards you
+want to keep before restarting it. Use the sidecar PID from `herdr-draw canvas status` to stop that
+process, then run `herdr-draw canvas start` and import the saved scenes into their boards.
 
 ## Debugging
 
@@ -127,12 +140,12 @@ For a remote board, read both sides: the laptop's `sidecar` (`relay:` and `bridg
 ## Layout of this repo
 
 - `cli/herdr-draw.mjs`: the CLI router; `cli/lib/mermaid.mjs` (Node, `pele`, `@resvg/resvg-js` for PNG previews)
-  and `cli/lib/canvas.mjs` (starts the canvas server from `node_modules/.bin` and the sidecar, splits the pane).
+  and `cli/lib/canvas.mjs` (starts the sidecar and splits the pane).
 - `mods/diagram-pane/`: clone of Herdr's shipped `pane` header plus the badge.
 - `mods/diagram-popup/`: the viewer.
-- `skills/herdr-canvas-mod/`: the agent skill; `SKILL.md` routes to `references/mermaid.md` (pins) or `references/canvas.md` (live canvas).
+- `skills/herdr-canvas-mod/`: the agent skill for pins, native canvas edits, and structured diagrams.
 
-## Known limits (POC)
+## Known limits
 
 - Needs Herdr 0.1.16 or newer (the mods use `on_pinch` and `checking()`).
 - Herdr stops mod code that runs too long, without a message: about 50 ms per render, 500 ms per event

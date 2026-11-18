@@ -101,6 +101,27 @@ describe("herdr-draw router", () => {
   });
 });
 
+describe("local Excalidraw file workflow", () => {
+  test("converts Mermaid and renders a scene from stdin without a sidecar", () => {
+    const input = "flowchart LR\nA[Gateway] --> B[Redis]";
+    const scene = run(["mermaid", "-", "--out", "-", "--elbow", "--font-size", "25"], {}, input);
+    expect(scene.code).toBe(0);
+    const elements = JSON.parse(scene.out).elements as Record<string, unknown>[];
+    expect(elements.find((element) => element.type === "arrow")).toMatchObject({
+      elbowed: true,
+      startBinding: { elementId: "diagram:anchor:flowchart:A" },
+      endBinding: { elementId: "diagram:anchor:flowchart:B" },
+    });
+    expect(elements.find((element) => element.text === "Gateway")).toMatchObject({ fontSize: 25 });
+    const rendered = run(["render", "-", "--out", "-", "--format", "svg", "--theme", "dark"], {}, scene.out);
+    expect(rendered.code).toBe(0);
+    expect(rendered.out).toStartWith("<svg");
+    expect(rendered.out).toContain("Gateway");
+    expect(run(["mermaid", "-", "--out", "-", "--font-size", "0"], {}, input).code).toBe(2);
+    expect(run(["render", "-", "--out", "-", "--bogus"], {}, scene.out).code).toBe(2);
+  });
+});
+
 describe("group args", () => {
   test("mermaid: the command, its positionals, string options and switches", () => {
     expect(parseArgs(["add", "--tab", "T", "--title", "2024", "f.mmd"])).toMatchObject({
@@ -137,7 +158,7 @@ describe("group args", () => {
   });
 });
 
-test("mermaid add, ls, remove on a temp app home", () => {
+test("mermaid add, source, ls, remove on a temp app home", () => {
   const env = { HERDR_APP_HOME: mkdtempSync(join(tmpdir(), "herdr-draw-test-")), HC_TERMINAL_ID: "t1" };
   const add = run(["mermaid", "add", "--title", "Build"], env, "flowchart TD\n a-->b\n");
   expect(add.code).toBe(0);
@@ -148,6 +169,7 @@ test("mermaid add, ls, remove on a temp app home", () => {
     title: "Build",
     svg: "data/herdr-agent-diagram/t1/d1-r1.svg",
   });
+  expect(run(["mermaid", "source", "d1"], env).out).toBe("flowchart TD\n a-->b");
   expect(run(["mermaid", "ls"], env).out).toContain("d1  Build");
   expect(run(["mermaid", "remove", "d1"], env).out).toBe("d1 removed\n");
   expect(run(["mermaid", "ls"], env).out).toBe("no pins for t1\n");
