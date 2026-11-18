@@ -9,14 +9,64 @@ export type BoardElement = Record<string, unknown> & { id: string; type: string 
 export interface Snapshot {
   readonly name: string;
   readonly elements: BoardElement[];
+  readonly blocks?: readonly DiagramBlock[];
   readonly createdAt: string;
+}
+
+export interface DiagramBlock {
+  readonly id: string;
+  readonly source: string;
+  readonly x: number;
+  readonly y: number;
+  readonly members: readonly string[];
+}
+
+export interface BoardChange {
+  undo(): void;
+  redo(): void;
+}
+
+export function isBlockId(id: unknown): id is string {
+  return typeof id === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(id);
+}
+
+export function readBlocks(value: unknown): DiagramBlock[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new BoardError("Expected a diagram block array");
+  const ids = new Set<string>();
+  const members = new Set<string>();
+  return value.map((entry: unknown) => {
+    if (!entry || typeof entry !== "object") throw new BoardError("Invalid diagram block");
+    const { id, source, x, y, members: own } = entry as Partial<DiagramBlock>;
+    if (
+      !isBlockId(id) ||
+      ids.has(id) ||
+      typeof source !== "string" ||
+      !source.trim() ||
+      source.length > 50_000 ||
+      typeof x !== "number" ||
+      !Number.isFinite(x) ||
+      typeof y !== "number" ||
+      !Number.isFinite(y) ||
+      !Array.isArray(own) ||
+      !own.length
+    )
+      throw new BoardError("Invalid or duplicate diagram block");
+    ids.add(id);
+    for (const member of own) {
+      if (typeof member !== "string" || !member.startsWith(`${id}:`) || members.has(member))
+        throw new BoardError(`Invalid or duplicate member of diagram block "${id}"`);
+      members.add(member);
+    }
+    return { id, source, x, y, members: [...own] };
+  });
 }
 
 /** A rejected request; `status` is the HTTP status the REST layer answers with. */
 export class BoardError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 404 = 400,
+    readonly status: 400 | 404 | 409 = 400,
   ) {
     super(message);
   }
@@ -55,6 +105,10 @@ export function normalizeFontFamily(f: unknown): number | undefined {
 const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 const ref = (v: unknown): string | undefined =>
   v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string" ? (v as { id: string }).id : undefined;
+function arrowTarget(el: BoardElement, end: "start" | "end"): string | undefined {
+  const binding = el[`${end}Binding`] as { elementId?: unknown } | null | undefined;
+  return ref(el[end]) ?? (typeof binding?.elementId === "string" ? binding.elementId : undefined);
+}
 const now = () => new Date().toISOString();
 const isLinear = (e: { type: string }) => e.type === "arrow" || e.type === "line";
 const has = (o: object, k: string) => Object.hasOwn(o, k);
@@ -105,8 +159,8 @@ const center = (e: BoardElement) => ({ x: num(e.x) + num(e.width) / 2, y: num(e.
 
 /** Points an arrow with start/end refs from edge to edge (8 px gap). Keeps start/end: the SDK binds from them. */
 function routeArrow(el: BoardElement, lookup: (id: string) => BoardElement | undefined): void {
-  const startId = ref(el.start);
-  const endId = ref(el.end);
+  const startId = arrowTarget(el, "start");
+  const endId = arrowTarget(el, "end");
   if (!startId && !endId) return;
   const s = startId ? lookup(startId) : undefined;
   const e = endId ? lookup(endId) : undefined;
@@ -158,9 +212,48 @@ function routeArrow(el: BoardElement, lookup: (id: string) => BoardElement | und
   el.points = route.map((p) => [p.x - start.x, p.y - start.y]);
 }
 
+function reconnectArrow(
+  el: BoardElement,
+  members: ReadonlySet<string>,
+  next: ReadonlyMap<string, BoardElement>,
+): BoardElement | undefined {
+  const arrow = { ...el, updatedAt: now(), version: num(el.version) + 1 };
+  let touched = false;
+  for (const end of ["start", "end"] as const) {
+    const id = arrowTarget(el, end);
+    if (!id || !members.has(id)) continue;
+    touched = true;
+    if (!next.has(id)) Object.assign(arrow, { [end]: null, [`${end}Binding`]: null });
+  }
+  if (!touched) return;
+  routeArrow(arrow, (target) => next.get(target));
+  return arrow;
+}
+
+interface HistorySlot {
+  readonly before?: string;
+  readonly elements: readonly BoardElement[];
+}
+
+/** Record only replaced elements and their insertion anchors, avoiding a copy of a large board per undo step. */
+function historySlots(ordered: ReadonlyMap<string, BoardElement>, touched: ReadonlySet<string>): HistorySlot[] {
+  const slots: HistorySlot[] = [];
+  let elements: BoardElement[] = [];
+  for (const [id, el] of ordered) {
+    if (touched.has(id)) elements.push(el);
+    else if (elements.length) {
+      slots.push({ before: id, elements });
+      elements = [];
+    }
+  }
+  if (elements.length) slots.push({ elements });
+  return slots;
+}
+
 export class Board {
   readonly elements = new Map<string, BoardElement>();
   readonly snapshots = new Map<string, Snapshot>();
+  readonly blocks = new Map<string, DiagramBlock>();
 
   constructor(private readonly onChange: () => void = () => {}) {}
 
@@ -174,9 +267,9 @@ export class Board {
     return el;
   }
 
-  create(body: Record<string, unknown>): BoardElement {
+  create(body: Record<string, unknown>, restoreMember = false): BoardElement {
     const el = this.fresh(body);
-    if (this.elements.has(el.id)) throw new BoardError(`id ${el.id} exists; use update`);
+    this.assertNew([el], false, restoreMember);
     if (isLinear(el)) routeArrow(el, (id) => this.elements.get(id));
     this.elements.set(el.id, el);
     this.onChange();
@@ -184,15 +277,26 @@ export class Board {
   }
 
   /** Creates many at once; `replace` swaps the whole scene, validated before anything is dropped. */
-  batch(bodies: unknown, replace = false): BoardElement[] {
+  batch(bodies: unknown, replace = false, blockData?: unknown): BoardElement[] {
     if (!Array.isArray(bodies)) throw new BoardError("Expected an array of elements");
     const created = bodies.map((b) => this.fresh(b as Record<string, unknown>));
     this.assertNew(created, replace);
+    const blocks = readBlocks(blockData);
+    for (const block of blocks) {
+      if (!replace && this.blocks.has(block.id)) throw new BoardError(`Diagram block "${block.id}" already exists`);
+      if (!replace && block.members.some((id) => this.elements.has(id)))
+        throw new BoardError(`Diagram block "${block.id}" would claim an existing element`);
+    }
     const byId = new Map(created.map((e) => [e.id, e]));
     for (const el of created)
-      if (isLinear(el)) routeArrow(el, (id) => byId.get(id) ?? (replace ? undefined : this.elements.get(id)));
-    if (replace) this.elements.clear();
+      if (isLinear(el) && (el.start || el.end))
+        routeArrow(el, (id) => byId.get(id) ?? (replace ? undefined : this.elements.get(id)));
+    if (replace) {
+      this.elements.clear();
+      this.blocks.clear();
+    }
     for (const el of created) this.elements.set(el.id, el);
+    for (const block of blocks) this.blocks.set(block.id, block);
     this.onChange();
     return created;
   }
@@ -211,7 +315,14 @@ export class Board {
     };
     if (isLinear(el)) {
       if (body.points === undefined) el.points = old.points;
-      routeArrow(el, (id) => this.elements.get(id));
+      for (const end of ["start", "end"] as const) {
+        const binding = `${end}Binding`;
+        // A new endpoint must replace the other representation from an imported scene.
+        if (has(body, end) && !has(body, binding)) el[binding] = null;
+        if (has(body, binding) && !has(body, end)) el[end] = null;
+      }
+      if (el.start || el.end || ["start", "end", "startBinding", "endBinding"].some((key) => has(body, key)))
+        routeArrow(el, (id) => this.elements.get(id));
     }
     if (el.type === "text" && has(body, "text") && !has(body, "originalText")) syncOriginalText(el, old, body);
     this.elements.set(id, el);
@@ -229,6 +340,7 @@ export class Board {
   clear(): number {
     const count = this.elements.size;
     this.elements.clear();
+    this.blocks.clear();
     this.onChange();
     return count;
   }
@@ -253,7 +365,12 @@ export class Board {
 
   saveSnapshot(name: unknown): Snapshot {
     if (!name || typeof name !== "string") throw new BoardError("Snapshot name is required");
-    const snap = { name, elements: structuredClone(this.list()), createdAt: now() };
+    const snap = {
+      name,
+      elements: structuredClone(this.list()),
+      ...(this.blocks.size ? { blocks: structuredClone([...this.blocks.values()]) } : {}),
+      createdAt: now(),
+    };
     this.snapshots.set(name, snap);
     return snap;
   }
@@ -264,11 +381,117 @@ export class Board {
     return snap;
   }
 
+  block(id: string): DiagramBlock {
+    const block = this.blocks.get(id);
+    if (!block) throw new BoardError(`Diagram block "${id}" not found`, 404);
+    return block;
+  }
+
+  /** Export can expand labels into separate elements. Include those in the parent's block. */
+  blockElements(block: DiagramBlock): BoardElement[] {
+    const members = new Set(block.members);
+    return this.list().filter(
+      (el) =>
+        members.has(el.id) || (el.type === "text" && typeof el.containerId === "string" && members.has(el.containerId)),
+    );
+  }
+
+  /** Replace one block, keeping the rest of the board and committing source and geometry together. */
+  changeBlock(
+    id: string,
+    before: DiagramBlock | undefined,
+    after: DiagramBlock | undefined,
+    generated?: readonly BoardElement[],
+  ): BoardChange {
+    if (this.blocks.get(id) !== before) throw new BoardError(`Diagram block "${id}" changed. Retry the command.`, 409);
+
+    const nextElements = generated ? this.withBlockElements(before, generated) : new Map(this.elements);
+    const touched = new Set(
+      [...new Set([...this.elements.keys(), ...nextElements.keys()])].filter(
+        (key) => this.elements.get(key) !== nextElements.get(key),
+      ),
+    );
+    const previous = historySlots(this.elements, touched);
+    const next = historySlots(nextElements, touched);
+    const setBlock = (block: DiagramBlock | undefined) => {
+      if (block) this.blocks.set(id, block);
+      else this.blocks.delete(id);
+    };
+    this.setElements(nextElements);
+    setBlock(after);
+    this.onChange();
+
+    const restore = (wanted: readonly HistorySlot[], block: DiagramBlock | undefined) => {
+      // Restore only this step's changes. Preserve elements edited elsewhere since the step was recorded.
+      const merged = new Map([...this.elements].filter(([key]) => !touched.has(key)));
+      const insertions = new Map<string | undefined, BoardElement[]>();
+      for (const slot of wanted) {
+        const anchor = slot.before && merged.has(slot.before) ? slot.before : undefined;
+        const additions = insertions.get(anchor) ?? [];
+        additions.push(...slot.elements);
+        insertions.set(anchor, additions);
+      }
+      const ordered = [...merged].flatMap(([key, el]) => [...(insertions.get(key) ?? []), el]);
+      ordered.push(...(insertions.get(undefined) ?? []));
+      this.setElements(new Map(ordered.map((el) => [el.id, el])));
+      setBlock(block);
+      this.onChange();
+    };
+    return {
+      undo: () => restore(previous, before),
+      redo: () => restore(next, after),
+    };
+  }
+
+  private withBlockElements(before: DiagramBlock | undefined, elements: readonly BoardElement[]) {
+    const oldMembers = new Set(before?.members);
+    if (before) for (const el of this.blockElements(before)) oldMembers.add(el.id);
+    const generated = new Map<string, BoardElement>();
+    for (const input of elements) {
+      const el = this.fresh(input);
+      if (generated.has(el.id) || (this.elements.has(el.id) && !oldMembers.has(el.id)))
+        throw new BoardError(`Diagram block element "${el.id}" conflicts with another element`);
+      generated.set(el.id, el);
+    }
+    for (const el of generated.values()) {
+      const label = el.label as { text?: string } | undefined;
+      const key = `${el.id}-label`;
+      if (label?.text && (generated.has(key) || (this.elements.has(key) && !oldMembers.has(key))))
+        throw new BoardError(`Diagram block label "${key}" conflicts with another element`);
+    }
+
+    const nextElements = new Map<string, BoardElement>();
+    let inserted = false;
+    for (const [key, el] of this.elements) {
+      if (!oldMembers.has(key)) {
+        nextElements.set(key, el);
+      } else if (!inserted) {
+        for (const [id, value] of generated) nextElements.set(id, value);
+        inserted = true;
+      }
+    }
+    if (!inserted) for (const [id, el] of generated) nextElements.set(id, el);
+    for (const [key, el] of nextElements) {
+      if (generated.has(key) || !isLinear(el)) continue;
+      const arrow = reconnectArrow(el, oldMembers, nextElements);
+      if (arrow) nextElements.set(key, arrow);
+    }
+    return nextElements;
+  }
+
+  private setElements(elements: ReadonlyMap<string, BoardElement>): void {
+    this.elements.clear();
+    for (const [id, element] of elements) this.elements.set(id, element);
+  }
+
   /** Create refuses an id the board already has. A replace may reuse ids; a repeated id in one batch may not. */
-  private assertNew(els: BoardElement[], replace: boolean): void {
+  private assertNew(els: BoardElement[], replace: boolean, restoreMember = false): void {
     const seen = new Set<string>();
+    const reserved = new Set(
+      replace || restoreMember ? [] : [...this.blocks.values()].flatMap((block) => block.members),
+    );
     for (const el of els) {
-      if (seen.has(el.id) || (!replace && this.elements.has(el.id)))
+      if (seen.has(el.id) || (!replace && (this.elements.has(el.id) || reserved.has(el.id))))
         throw new BoardError(`id ${el.id} exists; use update`);
       seen.add(el.id);
     }
@@ -292,7 +515,7 @@ export class Board {
   /** Bindings resolve at creation only, so a moved shape drags the arrows that name it along. */
   private rerouteArrowsOf(id: string): void {
     for (const el of this.elements.values()) {
-      if (!isLinear(el) || (ref(el.start) !== id && ref(el.end) !== id)) continue;
+      if (!isLinear(el) || (arrowTarget(el, "start") !== id && arrowTarget(el, "end") !== id)) continue;
       const arrow = { ...el, updatedAt: now(), version: num(el.version) + 1 }; // a copy: snapshots stay as taken
       routeArrow(arrow, (x) => this.elements.get(x));
       this.elements.set(arrow.id, arrow);

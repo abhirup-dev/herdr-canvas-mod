@@ -5,18 +5,21 @@ description: "Use inside the Herdr desktop app to show the user a diagram beside
 
 # herdr-canvas-mod
 
-Two ways to show a diagram next to your terminal in the Herdr app, both through `herdr-draw` CLI:
+Choose a route through the `herdr-draw` CLI:
 
 | The user wants | Use | Read first |
 |---|---|---|
 | A diagram kept visible, read-only (an architecture, a flow, a state machine) | `herdr-draw mermaid`: pins show in the pane's Diagrams badge and popup | [references/mermaid.md](references/mermaid.md) |
-| To draw or edit a diagram together, or to see the canvas | `herdr-draw canvas`: a live Excalidraw pane to your right | [references/canvas.md](references/canvas.md) |
+| Generate or revise an editable flowchart, sequence diagram, Gantt, or Sankey quickly | Named Mermaid blocks with `canvas block get/put` | [Structured diagrams and mixed edits](references/visual-formats-structured.md) |
+| Draw a custom scene, make a precise element edit, or open the canvas | Native `canvas` element commands | [Live canvas](references/canvas.md) |
+
+Use the editable canvas by default when showing a diagram in Herdr. Use a pin when the user asks for
+the Diagrams badge, the popup, or a read-only view.
 
 Keep pins few, so the Diagrams popup doesn't become a dump: pin what the user asked for, or only the
 most important, load-bearing diagrams. Diagrams that are just part of a chat answer stay in chat.
-Mermaid pins can't be converted onto the canvas: draw the elements there directly.
 
-Both modes:
+For diagrams you show:
 
 - **Keep the canvas tall.** Its pane is tall and narrow: lay out top to bottom, a few nodes per row,
   wrap long chains; go wide only when asked. For pins, follow the checker (it knows the popup's size).

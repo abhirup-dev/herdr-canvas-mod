@@ -23,6 +23,10 @@ const invert = (c: number): number =>
   Math.round(Math.max(0, Math.min(255, c * (1 - INVERT) + (255 - c) * INVERT))) / 255;
 const hex2 = (n: number): string => n.toString(16).padStart(2, "0");
 
+/** Excalidraw's check: "transparent", #rgb0 or #rrggbb00. */
+export const isTransparent = (color: string): boolean =>
+  color === "transparent" || (color.length === 5 && color[4] === "0") || (color.length === 9 && color.endsWith("00"));
+
 /** The colour Excalidraw draws `color` (#rgb, #rrggbb, #rrggbbaa) as in dark mode; other forms pass through. */
 export function darkColor(color: string): string {
   const hit = cache.get(color);

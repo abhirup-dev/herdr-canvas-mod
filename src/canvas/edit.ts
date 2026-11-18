@@ -1,6 +1,7 @@
 // Editing geometry, element factories and the style palette. Pure (no GPUI, no IO), so it is unit-tested in
 // Bun and shared by the mod. Coordinates are world units unless a name says otherwise.
 import type { Bounds } from "./camera.ts";
+import { isTransparent } from "./color.ts";
 import type { CanvasElement, FillStyle, LinearElement, Paint, Point, StrokeStyle, TextElement } from "./types.ts";
 
 export type Tool =
@@ -174,6 +175,24 @@ function segmentDistance(px: number, py: number, ax: number, ay: number, bx: num
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
 
+/** Even-odd containment for a filled loop. Match Excalidraw's fill threshold of eight world units. */
+function hitsFilledLoop(e: LinearElement, x: number, y: number): boolean {
+  if (e.opacity <= 0 || isTransparent(e.backgroundColor) || e.points.length < 3) return false;
+  const first = e.points[0] as Point;
+  let previous = e.points[e.points.length - 1] as Point;
+  if (Math.hypot(first[0] - previous[0], first[1] - previous[1]) > 8) return false;
+  const px = x - e.x;
+  const py = y - e.y;
+  let inside = false;
+  for (const point of e.points) {
+    const [cx, cy] = point;
+    const [ax, ay] = previous;
+    if (cy > py !== ay > py && px < cx + ((ax - cx) * (py - cy)) / (ay - cy)) inside = !inside;
+    previous = point;
+  }
+  return inside;
+}
+
 /** Whether world point (x, y) touches `e`, within `tol` world units. */
 export function hits(e: CanvasElement, x: number, y: number, tol: number): boolean {
   if (hasPoints(e)) {
@@ -184,7 +203,7 @@ export function hits(e: CanvasElement, x: number, y: number, tol: number): boole
       const b = pts[i] ?? [0, 0];
       if (segmentDistance(x, y, e.x + a[0], e.y + a[1], e.x + b[0], e.y + b[1]) <= tol + e.strokeWidth) return true;
     }
-    return false;
+    return e.type === "line" && hitsFilledLoop(e, x, y);
   }
   const b = elementBounds(e);
   return x >= b.minX - tol && x <= b.maxX + tol && y >= b.minY - tol && y <= b.maxY + tol;

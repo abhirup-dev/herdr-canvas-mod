@@ -27,13 +27,23 @@ import {
   worldPoints,
 } from "./edit.ts";
 import type { ElementFields, Op } from "./protocol.ts";
-import type { CanvasElement, LinearElement, TextElement } from "./types.ts";
+import type { CanvasElement, LinearElement, Point, TextElement } from "./types.ts";
 
 export interface Mods {
   readonly shift: boolean;
   readonly alt: boolean;
   readonly cmd: boolean;
 }
+
+type PointDrag = {
+  readonly kind: "point";
+  readonly id: string;
+  readonly index: number;
+  readonly endpoint: "start" | "end" | null;
+  readonly origin: Point;
+  readonly tolerance: number;
+  at: Point;
+};
 
 type Gesture =
   | { readonly kind: "move"; readonly x0: number; readonly y0: number; readonly originals: readonly CanvasElement[] }
@@ -47,7 +57,7 @@ type Gesture =
   | { readonly kind: "marquee"; readonly x0: number; readonly y0: number; x1: number; y1: number }
   | { readonly kind: "erase" }
   /** Dragging one point of a line or arrow (a midpoint drag inserts the point first). */
-  | { readonly kind: "point"; readonly id: string; readonly index: number };
+  | PointDrag;
 
 /** An open text editor: a new text, an existing one, or the label inside a container. */
 export interface TextEdit {
@@ -95,6 +105,20 @@ const TOOL_KEYS: Readonly<Record<string, Tool>> = {
 const PENDING_MS = 2500;
 const close = (a: unknown, b: unknown): boolean =>
   typeof a === "number" && typeof b === "number" ? Math.abs(a - b) < 0.5 : JSON.stringify(a) === JSON.stringify(b);
+
+function matchesEcho(actual: CanvasElement, expected: CanvasElement, key: string): boolean {
+  if ((key === "startBinding" || key === "endBinding") && actual.type === "arrow" && expected.type === "arrow")
+    return actual[key]?.elementId === expected[key]?.elementId;
+  return close(actual[key as keyof CanvasElement], expected[key as keyof CanvasElement]);
+}
+
+function arrowTarget(order: readonly CanvasElement[], x: number, y: number, tolerance: number): string | null {
+  const bindable = order.filter(
+    (e) =>
+      e.type === "rectangle" || e.type === "diamond" || e.type === "ellipse" || (e.type === "text" && !e.containerId),
+  );
+  return hitTest(bindable, x, y, tolerance)?.id ?? null;
+}
 
 export class Editor {
   tool: Tool = "selection";
@@ -166,12 +190,7 @@ export class Editor {
     const byId = new Map(this.scene().map((e) => [e.id, e]));
     for (const [id, p] of this.pending) {
       const e = byId.get(id);
-      if (
-        p.el.isDeleted
-          ? !e
-          : e && p.keys.every((k) => close(e[k as keyof CanvasElement], p.el[k as keyof CanvasElement]))
-      )
-        this.pending.delete(id);
+      if (p.el.isDeleted ? !e : e && p.keys.every((k) => matchesEcho(e, p.el, k))) this.pending.delete(id);
     }
   }
 
@@ -196,21 +215,28 @@ export class Editor {
   /** Starts a point drag or a resize when the press is on a handle of the selection. */
   private grabHandle(els: readonly CanvasElement[], x: number, y: number, tol: number): boolean {
     const lin = this.singleLinear(els);
-    if (lin) {
-      const ph = pointHandleAt(lin, x, y, tol * 1.5);
-      if (!ph) return false;
-      const pts = worldPoints(lin);
-      if (ph.kind === "mid") pts.splice(ph.index, 0, [x, y]);
-      // Bending makes the line round (Excalidraw keeps sharp lines sharp; we want smooth bends by default).
-      const roundness = ph.kind === "mid" ? (lin.roundness ?? { type: 2 }) : lin.roundness;
-      this.drafts.set(lin.id, throughPoints({ ...lin, roundness }, pts));
-      this.gesture = { kind: "point", id: lin.id, index: ph.index };
-      return true;
-    }
+    if (lin) return this.grabPoint(lin, [x, y], tol);
     const sel = this.selected.size ? this.selectionBounds(els) : null;
     const handle = sel ? handleAt(sel, x, y, tol * 1.5) : null;
     if (!sel || !handle) return false;
     this.gesture = { kind: "resize", handle, from: sel, originals: els.filter((e) => this.selected.has(e.id)) };
+    return true;
+  }
+
+  private grabPoint(line: LinearElement, at: Point, tolerance: number): boolean {
+    const handle = pointHandleAt(line, at[0], at[1], tolerance * 1.5);
+    if (!handle) return false;
+    const points = worldPoints(line);
+    if (handle.kind === "mid") points.splice(handle.index, 0, at);
+    // Bending makes the line round (Excalidraw keeps sharp lines sharp; we want smooth bends by default).
+    const roundness = handle.kind === "mid" ? (line.roundness ?? { type: 2 }) : line.roundness;
+    this.drafts.set(line.id, throughPoints({ ...line, roundness }, points));
+    let endpoint: PointDrag["endpoint"] = null;
+    if (line.type === "arrow" && handle.kind === "point") {
+      if (handle.index === 0) endpoint = "start";
+      else if (handle.index === points.length - 1) endpoint = "end";
+    }
+    this.gesture = { kind: "point", id: line.id, index: handle.index, endpoint, origin: at, at, tolerance };
     return true;
   }
 
@@ -251,6 +277,7 @@ export class Editor {
         this.resizeTo(g, x, y, m.shift);
         return;
       case "point":
+        g.at = [x, y];
         this.movePoint(g.id, g.index, x, y);
         return;
       case "create":
@@ -305,7 +332,7 @@ export class Editor {
         for (const e of inBox(this.elements(), boxFrom(g.x0, g.y0, g.x1, g.y1))) this.selected.add(e.id);
         return;
       case "point":
-        this.finishPoint(g.id);
+        this.finishPoint(g);
         return;
       case "move":
       case "resize":
@@ -317,13 +344,31 @@ export class Editor {
     }
   }
 
-  private finishPoint(id: string): void {
+  private finishPoint({ id, endpoint, origin, at, tolerance }: PointDrag): void {
     const d = this.drafts.get(id);
     this.drafts.delete(id);
-    if (!d || !("points" in d)) return;
+    if (!d || !("startBinding" in d)) return;
+    if (Math.hypot(at[0] - origin[0], at[1] - origin[1]) <= tolerance / 2) {
+      this.previews.delete(id);
+      return;
+    }
     const { x, y, points, width, height, roundness } = d;
-    this.outbox.push([{ op: "update", id, fields: { x, y, points, width, height, roundness } }]);
-    this.settle(d, ["x", "y"]);
+    const fields: Record<string, unknown> = { x, y, points, width, height, roundness };
+    let optimistic: LinearElement = d;
+    let keys = ["x", "y"];
+    if (endpoint) {
+      const key = endpoint === "start" ? "startBinding" : "endBinding";
+      const target = arrowTarget(this.elements(), at[0], at[1], tolerance);
+      if (target !== (d[key]?.elementId ?? null)) {
+        fields[endpoint] = target ? { id: target } : null;
+        fields[key] = null;
+        // The sidecar snaps the endpoint to the shape. Acknowledge by target ID, since its geometry can differ.
+        optimistic = { ...d, [key]: target ? { elementId: target } : null };
+        keys = [key];
+      }
+    }
+    this.settle(optimistic, keys);
+    this.outbox.push([{ op: "update", id, fields }]);
   }
 
   private finishTransform(g: Extract<Gesture, { kind: "move" | "resize" }>): void {

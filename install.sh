@@ -3,7 +3,6 @@
 #   curl -fsSL https://raw.githubusercontent.com/abhirup-dev/herdr-canvas-mod/main/install.sh | sh
 #   ... | sh -s -- -y --agents claude,pi --machines vpsme      (no questions, for agents and scripts)
 # From a clone, `./install.sh` installs that checkout instead of cloning.
-# While the repo is private, curl can't fetch this file: clone it (git clone <repo>) and run ./install.sh.
 # Env: HERDR_DRAW_REPO (git URL), HERDR_DRAW_HOME (where the clone lives, default ~/.local/share/herdr-draw).
 set -eu
 repo="${HERDR_DRAW_REPO:-https://github.com/abhirup-dev/herdr-canvas-mod.git}"

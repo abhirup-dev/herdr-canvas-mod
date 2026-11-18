@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { cac } from "cac";
 import { logger } from "../src/log/log.mjs";
 import { parse } from "./lib/args.mjs";
-import { bridgeEndpoint, canvas } from "./lib/canvas.mjs";
+import { bridgeEndpoint, canvas, sceneFileCli } from "./lib/canvas.mjs";
 import { setup, version } from "./lib/install.mjs";
 import { logs } from "./lib/logs.mjs";
 import { mermaid } from "./lib/mermaid.mjs";
@@ -16,7 +16,8 @@ export const HELP = `herdr-draw: pinned Mermaid diagrams and a live Excalidraw c
 usage: herdr-draw <group> <command> [options]
        herdr-draw help [group [command]]
 
-  mermaid ...       pin read-only Mermaid diagrams (herdr-draw mermaid help)
+  mermaid ...       convert Mermaid files or pin read-only diagrams (herdr-draw mermaid help)
+  render ...        render a local .excalidraw file to PNG or SVG
   canvas ...        the live, editable Excalidraw canvas (herdr-draw canvas help)
   open              show the view for this terminal (for now: canvas open)
   install           set up this machine and, if you choose, your other machines (herdr-draw install help)
@@ -50,7 +51,7 @@ const help = () => process.stdout.write(HELP);
 export function program() {
   const cli = cac("herdr-draw");
   cli.option("-h, --help", "help").option("-V, --version", "version");
-  for (const g of ["mermaid", "canvas", "open", "install", "uninstall", "doctor", "logs", "bridge", "help"])
+  for (const g of ["mermaid", "render", "canvas", "open", "install", "uninstall", "doctor", "logs", "bridge", "help"])
     cli.command(g).allowUnknownOptions();
   return cli;
 }
@@ -67,6 +68,7 @@ export function route(argv) {
   if (cmd === "help" && rest.length && rest[0] !== "help") return route([rest[0], "--help", ...rest.slice(1)]);
   return {
     mermaid: () => mermaid(rest),
+    render: (env) => sceneFileCli("render", rest, env),
     canvas: (env) => canvas(rest, env),
     open: (env) => canvas(["open", ...rest], env),
     install: (env) => setup(cmd, rest, env),

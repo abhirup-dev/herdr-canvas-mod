@@ -84,10 +84,16 @@ function bunBin(env) {
 // Like the upstream CLI it starts the sidecar first (except for `stop`, a no-op on the shared sidecar).
 export async function boardCli(argv, env) {
   if (argv[0] !== "stop") await ensureBackend(env);
-  const r = spawnSync(bunBin(env), [path.join(REPO, "src/board/cli.ts"), ...argv], {
-    stdio: "inherit",
-    env: { ...env, EXPRESS_SERVER_URL: urls(env).board },
-  });
+  return runBun("src/board/cli.ts", argv, { ...env, EXPRESS_SERVER_URL: urls(env).board });
+}
+
+/** Run local file commands without starting or connecting to a board. */
+export function sceneFileCli(command, argv, env) {
+  process.exitCode = runBun("src/board/file-cli.ts", [command, ...argv], env);
+}
+
+function runBun(script, argv, env) {
+  const r = spawnSync(bunBin(env), [path.join(REPO, script), ...argv], { stdio: "inherit", env });
   if (r.error) die(r.error.message);
   return r.status ?? 1;
 }

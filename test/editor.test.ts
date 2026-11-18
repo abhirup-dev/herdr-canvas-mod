@@ -49,6 +49,32 @@ describe("edit geometry", () => {
     expect(hitTest([a], 500, 500, 2)).toBeNull();
   });
 
+  test("hit test selects the actual interior of a filled closed line", () => {
+    const line = newElement("line", 100, 150, DEFAULT_STYLE, "ribbon", 1);
+    if (line.type !== "line") throw new Error("expected a line");
+    const filled = {
+      ...line,
+      strokeColor: "transparent",
+      backgroundColor: "#a5d8ff",
+      opacity: 45,
+      points: [
+        [0, 0],
+        [100, 0],
+        [100, 30],
+        [30, 30],
+        [30, 100],
+        [0, 100],
+        [0, 0],
+      ] as const,
+    };
+    expect(hitTest([filled], 115, 200, 2)?.id).toBe("ribbon");
+    expect(hitTest([filled], 155, 165, 2)?.id).toBe("ribbon");
+    expect(hitTest([filled], 155, 205, 2)).toBeNull();
+    expect(hitTest([{ ...filled, points: filled.points.slice(0, -1) }], 115, 200, 2)).toBeNull();
+    expect(hitTest([{ ...filled, backgroundColor: "#a5d8ff00" }], 115, 200, 2)).toBeNull();
+    expect(hitTest([{ ...filled, opacity: 0 }], 115, 200, 2)).toBeNull();
+  });
+
   test("resize flips past the opposite edge and shift keeps the aspect ratio", () => {
     const b = { minX: 0, minY: 0, maxX: 100, maxY: 50 };
     expect(resizeBounds(b, "e", -20, 0)).toEqual({ minX: -20, minY: 0, maxX: 0, maxY: 50 });
@@ -223,6 +249,40 @@ describe("editor", () => {
         [250, -20],
       ],
     });
+  });
+
+  test("dragging an existing arrow endpoint onto a box rebinds that end and accepts the snapped geometry", () => {
+    const arrow = dragOut(newElement("arrow", 100, 25, DEFAULT_STYLE, "arr", 1), 100, 25, 300, 25, false);
+    if (arrow.type !== "arrow") throw new Error("expected an arrow");
+    const prior = { ...arrow, startBinding: { elementId: "a" }, endBinding: { elementId: "b" } };
+    const shapes = [rect("a", 0, 0), rect("b", 300, 0), rect("c", 300, 100)];
+    const { ed, ops, setScene } = setup([...shapes, prior]);
+    ed.selected.add("arr");
+    ed.down(300, 25, none, 1, 2);
+    ed.up(350, 125, none, 2);
+    const [[op]] = ops() as [[Op]];
+    expect(op.op === "update" && op.fields).toMatchObject({ end: { id: "c" }, endBinding: null });
+    expect(op.op === "update" && "start" in op.fields).toBe(false);
+    expect(ed.singleLinear()).toMatchObject({ endBinding: { elementId: "c" } });
+    setScene([...shapes, { ...prior, x: 108, endBinding: { elementId: "c", gap: 8, focus: 0 } }]);
+    expect(ed.pending.has("arr")).toBe(false);
+    expect(ed.singleLinear()?.x).toBe(108);
+  });
+
+  test("clicking an endpoint preserves its binding; dropping it on empty space detaches it", () => {
+    const arrow = dragOut(newElement("arrow", 100, 25, DEFAULT_STYLE, "arr", 1), 100, 25, 300, 25, false);
+    if (arrow.type !== "arrow") throw new Error("expected an arrow");
+    const { ed, ops } = setup([rect("a", 0, 0), { ...arrow, startBinding: { elementId: "a" } }]);
+    ed.selected.add("arr");
+    ed.down(101, 25, none, 1, 4);
+    ed.up(101, 25, none, 4);
+    expect(ops()).toEqual([]);
+    ed.down(100, 25, none, 1, 4);
+    ed.up(160, 75, none, 4);
+    const [[op]] = ops() as [[Op]];
+    expect(op.op === "update" && op.fields).toMatchObject({ start: null, startBinding: null });
+    expect(op.op === "update" && "end" in op.fields).toBe(false);
+    expect(ed.singleLinear()?.startBinding).toBeNull();
   });
 
   test("tool shortcuts switch tools, and keys are ignored while editing text", () => {

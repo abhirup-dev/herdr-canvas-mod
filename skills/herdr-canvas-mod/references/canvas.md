@@ -23,8 +23,12 @@ patch: `{"create":[...],"update":[{"id":"a","set":{...}}],"delete":["id"]}`.
   an id that already exists (exit 2): change it with `update`.
 - `"text"` on a shape is its label. `fontSize`, `verticalAlign` (`top`/`middle`/`bottom`) and
   `textAlign` (`left`/`center`/`right`) next to it style the label.
-- Arrows: `startElementId` / `endElementId` bind them to shapes. A bound arrow keeps any `points`
-  you give and `"elbowed": true`, and follows when the shapes move. `"text"` on an arrow labels it.
+  On an imported scene, update an existing bound label using the text element ID whose `containerId`
+  points to that shape or arrow.
+- Arrows: for `add`, bind to shapes with `startElementId` / `endElementId`. To change a binding with
+  `update` or `apply`, use `"start":{"id":"shape-id"}` or `"end":{"id":"shape-id"}`.
+  Set `"elbowed":true` and relative `points` in the same edit for a custom route. The router
+  adjusts points at the bindings, so inspect the result. `"text"` on an arrow labels it.
 - `fontFamily`: `"excalifont"`, `"helvetica"`, `"cascadia"`, or `"1"`-`"8"`.
 
 ```bash
@@ -85,3 +89,26 @@ screenshot again.
 - Files: `export --out diagram.excalidraw`, `import diagram.excalidraw [--replace]`,
   `screenshot --out diagram.png` (or `.svg`).
 - `herdr-draw canvas help <command>` shows one command's flags.
+
+## Editable Mermaid blocks
+
+Use [structured diagrams and mixed edits](visual-formats-structured.md) for named blocks, guarded
+source updates, and switching between generated and native geometry.
+
+For a custom computed diagram, a Bun or TypeScript program can print an element array to
+`herdr-draw canvas add -`, or print a patch to `herdr-draw canvas apply -`. Use stable IDs so follow-up
+scripts can target individual elements.
+
+## Local Excalidraw files
+
+Use the file commands for a portable scene or to check geometry without opening a live board.
+
+```bash
+herdr-draw mermaid trace.mmd --out trace.excalidraw
+herdr-draw render trace.excalidraw --out trace.png
+herdr-draw mermaid trace.mmd --out - | herdr-draw render - --out trace.svg
+```
+
+Both support `--out -` for raw output. Use `render --help` and `mermaid convert --help` for options.
+Use `block put` for a live diagram whose source you want to revise in place. A file conversion
+produces scene elements for export or import.

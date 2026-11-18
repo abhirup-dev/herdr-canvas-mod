@@ -17,7 +17,7 @@ import { Resvg } from "@resvg/resvg-js";
 import { cac } from "cac";
 import { render } from "pele";
 import { parse } from "./args.mjs";
-import { appHere, signal } from "./canvas.mjs";
+import { appHere, sceneFileCli, signal } from "./canvas.mjs";
 
 export const getAppHome = () => process.env.HERDR_APP_HOME || path.join(os.homedir(), ".config", "herdr-app");
 export const getRoot = () => path.join(getAppHome(), "data", "herdr-agent-diagram");
@@ -164,12 +164,16 @@ export function extract(text) {
 
 export const HELP = `herdr-draw mermaid: pin Mermaid diagrams for the Herdr terminal you run in; they show in the app's pane badge and Diagrams popup.
 
-usage: herdr-draw mermaid <command> [options]
+usage: herdr-draw mermaid <file.mmd|-> --out <file|->
+       herdr-draw mermaid <command> [options]
+
+  convert <file|-> --out <file|->     convert to editable Excalidraw, PNG or SVG (convert --help for flags)
 
   add [--tab NAME] [--title T] [file]   pin a diagram (file or stdin: bare mermaid, or markdown with a \`\`\`mermaid fence
                                         and a # heading as the title); prints its id, a PNG preview path
                                         and how readable it will be in the popup
   replace <id> [--title T] [file]       redraw a pin in place (same id, same tab)
+  source <id>                           print the Mermaid source of a pin
   remove <id>                           unpin; an emptied tab goes with it
   check [file | id]                     render without pinning: Pele errors, a PNG preview to look at,
                                         readability warnings (no terminal needed for a file or stdin)
@@ -230,6 +234,7 @@ export function program() {
   cli.option("--terminal <addr>", "act for another terminal").option("-h, --help", "help");
   cli.command("add [file]").option("--tab <name>", "tab").option("--title <title>", "title");
   cli.command("replace <id> [file]").option("--title <title>", "title");
+  cli.command("source <id>");
   cli.command("remove <id>");
   cli.command("check [target]");
   cli.command("ls").option("--json", "JSON");
@@ -315,6 +320,11 @@ function check(file, mmd = extract(readInput(file)).mmd, label = "") {
 }
 
 export async function mermaid(argv) {
+  const [first, ...fileArgs] = argv;
+  if (first === "convert") return sceneFileCli("mermaid", fileArgs, process.env);
+  const pinCommand = first && ["add", "replace", "source", "remove", "check", "ls", "clear", "help"].includes(first);
+  if (!pinCommand && (first === "-" || first?.endsWith(".mmd") || argv.some((arg) => /^--out(?:=|$)/.test(arg))))
+    return sceneFileCli("mermaid", argv, process.env);
   const { cmd, args: rest, options: o } = parseArgs(argv);
   if (o.help || cmd === "help" || (!cmd && !rest.length)) {
     process.stdout.write(HELP);
@@ -363,6 +373,9 @@ export async function mermaid(argv) {
     console.log(
       `${found.pin.id} replaced (${art.type}, ${art.width}x${art.height})\npreview: ${art.png}\n${advice(art).join("\n")}`,
     );
+  } else if (cmd === "source") {
+    const found = findPin(state, rest[0]) || die(`no pin ${rest[0]}`);
+    process.stdout.write(found.pin.mmd);
   } else if (cmd === "remove") {
     const found = findPin(state, rest[0]) || die(`no pin ${rest[0]}`);
     unlinkAssets(dir, found.pin);

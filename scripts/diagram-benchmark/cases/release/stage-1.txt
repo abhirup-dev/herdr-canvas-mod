@@ -1,0 +1,8 @@
+Build an editable release control room for a canary rollout. Use the real canvas API provided for your run, with separate panels and nonoverlapping, legible titles. Build all four panels on one board.
+
+1. Routing flow. Gateway → Router. Router → Control, Router → Canary. Canary → Health Gate. Health Gate → Ramp labeled Pass and → Rollback labeled Fail. Use bound arrow endpoints.
+2. Request trace. Participants in order are Client, Gateway, Canary, Cache, DB. Messages in order: Client→Gateway "GET /catalog", Gateway→Canary "Route", Canary→Cache "Lookup", Cache→Canary "Miss", Canary→DB "Read", DB→Canary "Rows", Canary→Gateway "200", Gateway→Client "Response". Make the order and participants clear with native elements.
+3. Traffic Sankey. Incoming → Control 80 and → Canary 20. Control → Cache hit 64 and → Database 16. Canary → Cache hit 16 and → Database 4. Editably encode proportional widths and show enough labels to read values from the board.
+4. Release schedule. Baseline starts Nov 19, 2026 and lasts one day. Deploy follows for one day, Observe for two days, and Ramp for one day. Layout on a legible date axis.
+
+Add a separate hand-annotation shape with exact ID ops-note and label "Ops approval pending". Attach a separate arrow with ID ops-link from this shape to Health Gate. Give the board a title and export it as stage1.excalidraw plus stage1.png. Finish with a checkpoint: stop after the first stage and report what worked and any remaining flaws. A second brief will follow.

@@ -1,0 +1,9 @@
+Revise the existing board in place. Inspect the actual current board and preserve the hand annotation and its connector. Report your before-audit of traffic totals, rollout dates, and whether the hand note differs from the original brief.
+
+1. Flow: insert Policy Check between Router and Canary. Preserve Router→Control. Change just the Health Gate → Ramp arrow label from Pass to Healthy. Keep the hand arrow bound to the original Health Gate ID.
+2. Sequence: add participant Queue between Canary and Cache. Immediately after Miss, insert Canary→Queue "Enqueue fallback" and Queue→Canary "Ack". Preserve the remaining messages in order. Review the diagram for lifeline and label collisions.
+3. Sankey: change Incoming to 65 Control and 35 Canary. Control contributes 52 to Cache hit and 13 to Database. Canary contributes 21 to Cache hit and 9 to Database, and 5 to new destination Retry. Audit conservation and show the totals.
+4. Schedule: insert Risk review for one day immediately after Deploy. Extend Observe from two to three days, then add Freeze for a day before Ramp, with Ramp still after every predecessor. Make the new dates visible.
+5. Do not replace the whole board. Keep unrelated entities and canvas-only edits wherever the API permits. Report any canvas-only edits found on generated elements that did not survive, and explain whether you restored those edits or why it was unsafe.
+
+Export stage2.excalidraw and stage2.png. Report what the API actually made easy or hard, issues you encountered, and any acceptance criteria you missed. Stop after completing this stage.

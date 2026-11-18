@@ -4,6 +4,7 @@
 
 import { isCanvasElement } from "../canvas/types.ts";
 import { labelWarnings } from "./layout.ts";
+import { getDomWindow } from "./upstream/core/render/excalidraw-node/dom.js";
 import { prepareScene } from "./upstream/core/render/excalidraw-node/index.js";
 import { type RenderOptions, type RenderResult, renderScene } from "./upstream/core/render/index.js";
 
@@ -14,13 +15,25 @@ function serial<T>(job: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/** Run a diagram converter in the same DOM and queue as Excalidraw's scene preparation. */
+export function withRenderDom<T>(job: () => Promise<T>): Promise<T> {
+  return serial(() => {
+    getDomWindow();
+    return job();
+  });
+}
+
 /** Elements as the canvas shows them: shorthand expanded, labels bound, arrows bound, restored. */
 export const prepare = (elements: readonly object[]): Promise<Record<string, unknown>[]> =>
   serial(() => prepareScene(elements as Record<string, never>[]));
 
 /** A PNG (base64) or SVG of the elements. */
-export const render = (elements: readonly object[], options: RenderOptions): Promise<RenderResult> =>
-  serial(() => renderScene({ elements: elements as Record<string, never>[], files: {} }, options));
+export const render = (
+  elements: readonly object[],
+  options: RenderOptions,
+  files: Record<string, unknown> = {},
+): Promise<RenderResult> =>
+  serial(() => renderScene({ elements: elements as Record<string, never>[], files }, options));
 
 /** Additive CLI diagnostics, omitted when no arrow label needs more room. */
 export async function renderingWarnings(elements: readonly object[]): Promise<{ warnings?: string[] }> {

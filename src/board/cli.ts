@@ -6,12 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { type Alignment, align, type Direction, distribute, duplicate, group, setLocked, ungroup } from "./arrange.ts";
-import { BoardClient, UnreachableError } from "./client.ts";
+import { BoardClient, BoardHttpError, UnreachableError } from "./client.ts";
 import { labelOverflowWarnings } from "./overflow.ts";
 import { describeScene, prepareElement, prepareUpdate } from "./prepare.ts";
 import { renderingWarnings } from "./render.ts";
 import { sceneFile } from "./scene-file.ts";
-import type { BoardElement } from "./store.ts";
+import { type BoardElement, type DiagramBlock, isBlockId } from "./store.ts";
 
 export interface CliOptions {
   /** The board's base URL, e.g. http://127.0.0.1:3077/b/t72. */
@@ -241,8 +241,9 @@ async function screenshot({ c, flags }: Ctx): Promise<void> {
 async function exportScene({ c, flags }: Ctx): Promise<void> {
   const out = str(flags.out);
   const format = str(flags.format) ?? "json";
-  if (format !== "json" || out?.endsWith(".md")) throw new UsageError("only --format json (Obsidian export was cut)");
-  const scene = sceneFile(await c.elements());
+  if (format !== "json" || out?.endsWith(".md")) throw new UsageError("Canvas export writes Excalidraw JSON");
+  const { elements, blocks } = await c.scene();
+  const scene = sceneFile(elements, blocks);
   const text = JSON.stringify(scene, null, 2);
   if (!out) return void process.stdout.write(`${text}\n`);
   const file = path.resolve(out);
@@ -253,14 +254,13 @@ async function exportScene({ c, flags }: Ctx): Promise<void> {
 async function importScene({ c, pos, flags, text }: Ctx): Promise<void> {
   const raw = await text(pos[0]);
   if (!raw.trim()) throw new UsageError("No scene provided (pass a .excalidraw file or pipe JSON to stdin)");
-  const data = parseJson(raw, "scene") as { elements?: unknown } | unknown[];
-  const els = (Array.isArray(data) ? data : ((data as { elements?: unknown }).elements ?? [])) as Record<
-    string,
-    unknown
-  >[];
-  if (!Array.isArray(els) || !els.length) throw new Error("No elements found in the import data");
+  const data = parseJson(raw, "scene") as { elements?: unknown; herdrDraw?: { blocks?: unknown } } | unknown[] | null;
+  const els = Array.isArray(data) ? data : data?.elements;
+  const blocks = Array.isArray(data) ? undefined : data?.herdrDraw?.blocks;
+  if (!Array.isArray(els) || (!els.length && !Array.isArray(blocks)))
+    throw new Error("No elements found in the import data");
   const mode = flags.replace ? "replace" : "merge";
-  await c.batch(els, mode === "replace");
+  await c.batch(els, mode === "replace", blocks);
   print({ success: true, imported: els.length, files: 0, mode });
 }
 
@@ -276,11 +276,51 @@ async function snapshot({ c, pos }: Ctx): Promise<void> {
   const snap = await c.snapshot(name).catch(() => {
     throw new Error(`Snapshot "${name}" not found`);
   });
-  await c.batch(snap.elements, true);
+  await c.batch(snap.elements, true, snap.blocks);
   print({ success: true, name, restored: snap.elements.length });
 }
 
 const ALIGNMENTS = new Set(["left", "center", "right", "top", "middle", "bottom"]);
+
+function readBlockPosition(value: unknown): { x: number; y: number } | undefined {
+  const at = str(value);
+  if (at === undefined) return;
+  const parts = at.split(",").map((part) => part.trim());
+  const [x, y] = parts.map(Number);
+  if (parts.length !== 2 || parts.some((part) => !part) || !Number.isFinite(x) || !Number.isFinite(y))
+    throw new UsageError("--at expects x,y");
+  return { x: Number(x), y: Number(y) };
+}
+
+async function diagramBlock({ c, pos, flags, text }: Ctx): Promise<void> {
+  const [action, id, file] = pos;
+  const expected = str(flags["expect-source"]);
+  if (expected !== undefined && (action !== "put" || expected === "-"))
+    throw new UsageError("--expect-source needs a file and is only supported by block put");
+  if (action === "list" && !id) {
+    const { blocks } = await c.call<{ blocks: DiagramBlock[] }>("GET", "/api/blocks");
+    return print(blocks.map(({ id, x, y, members }) => ({ id, x, y, elements: members.length })));
+  }
+  if (!action || !["put", "get", "source", "move", "remove", "detach"].includes(action) || !isBlockId(id))
+    throw new UsageError("Choose a block action and a valid block ID");
+  if (pos.length > (action === "put" ? 3 : 2)) throw new UsageError("Too many block arguments");
+  const position = readBlockPosition(flags.at);
+  const url = `/api/blocks/${encodeURIComponent(id)}`;
+  if (action === "get" || action === "source") {
+    const block = await c.getBlock(id);
+    if (action === "get") return print(block);
+    return void process.stdout.write(block.source);
+  }
+  if (action === "move") {
+    if (!position) throw new UsageError("move needs --at x,y");
+    return print(await c.call("PATCH", url, position));
+  }
+  if (action === "detach") return print(await c.call("POST", `${url}/detach`));
+  if (action === "remove") return print(await c.call("DELETE", url));
+  const source = await text(file);
+  const guard = expected === undefined ? {} : { expectedSource: await text(expected) };
+  print(await c.putBlock(id, source, { ...position, ...guard }));
+}
 
 async function arrange({ c, pos, flags }: Ctx): Promise<void> {
   const op = pos[0];
@@ -375,7 +415,21 @@ export const COMMANDS: Record<string, Command> = {
   describe: {
     usage: "describe",
     summary: "AI-readable scene description with arrow endpoints and frame names",
-    run: async ({ c }) => void process.stdout.write(`${describeScene(await c.elements())}\n`),
+    run: async ({ c }) => {
+      const { elements, blocks } = await c.scene();
+      const details = blocks.map(
+        (block) => `  ${block.id} at (${block.x}, ${block.y})\n    ${block.members.join(", ")}`,
+      );
+      const section = details.length ? `\n\n### Mermaid blocks\n${details.join("\n")}` : "";
+      process.stdout.write(`${describeScene(elements)}${section}\n`);
+    },
+  },
+  block: {
+    usage:
+      "block put <id> [file.mmd|-] [--at x,y] [--expect-source before.mmd] | block get|source|remove|detach <id> | block list | block move <id> --at x,y",
+    summary: "Generate or manage editable, source-backed Mermaid blocks",
+    flags: { at: "value", "expect-source": "value" },
+    run: diagramBlock,
   },
   screenshot: {
     usage:
@@ -452,6 +506,12 @@ export async function run(argv: string[], opts: CliOptions): Promise<number> {
     await cmd.run({ c: new BoardClient(opts.url), pos, flags, input, text });
     return 0;
   } catch (e) {
+    if (e instanceof BoardHttpError && e.status === 404 && /^Not found: \w+ \/api\/blocks/.test(e.message)) {
+      process.stderr.write(
+        "Error: The running sidecar predates Mermaid blocks. See the upgrade instructions in the Herdr Canvas Mod README.\n",
+      );
+      return 1;
+    }
     process.stderr.write(`Error: ${(e as Error).message}\n`);
     if (e instanceof UsageError) {
       process.stderr.write(`Usage: ${cmd.usage}\n`);
