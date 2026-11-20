@@ -4,22 +4,22 @@ Collaborate better with your coding agents using Mermaid and Excalidraw diagrams
 [Herdr](https://herdr.dev) app. Agents run one CLI, `herdr-draw`, to pin Mermaid diagrams to their pane and to draw
 on a live Excalidraw canvas you can edit too.
 
+## What you get
+
+**A live canvas beside the agent.** It draws from its shell, often as editable blocks generated from Mermaid; you draw
+by hand; each sees the other's changes as they happen.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/canvas-dark.jpg">
   <img alt="An agent beside a live canvas with an architecture diagram and a sequence diagram" src="docs/images/canvas-light.jpg">
 </picture>
 
-## What you get
-
-- **Live canvas.** An Excalidraw canvas splits in beside the agent. The agent draws from its shell, often as editable
-  blocks generated from Mermaid; you draw by hand; each sees the other's changes as they happen.
-- **Pinned diagrams.** An agent pins Mermaid (every Mermaid 12.1 diagram type, rendered by Pele). Its pane header
-  shows a `◫ 2` badge; click it for a viewer with tabs, pages, zoom and pan, in your theme's colors.
-- **Other machines.** Agents on machines you added to Herdr (`hc machine add`) work the same; their diagrams and
-  canvases show in your app.
-- **An agent skill** for Claude Code, pi and Codex, so agents know when and how to draw.
+**Pinned diagrams.** Every Mermaid diagram type; the pane header's `◫` badge opens them with tabs, pages, zoom and pan.
 
 ![Pinned Mermaid diagrams in the viewer: a sankey funnel and a state diagram](docs/images/popup-light.jpg)
+
+Agents on your other machines (`hc machine add`) show up the same way, and a skill for Claude Code, pi and Codex
+tells agents when and how to draw.
 
 ## Install
 
