@@ -29,21 +29,6 @@ On the machine that runs the Herdr app (Herdr 0.1.16 or newer; bun is installed 
 curl -fsSL https://raw.githubusercontent.com/abhirup-dev/herdr-canvas-mod/main/install.sh | sh
 ```
 
-**One manual step, for the badge.** The pane header comes from the layout, and shipped layouts are read-only.
-Clone yours once (this also switches to it):
-
-```sh
-herdr-app do layout.clone '{"name":"main","as":"diagrams"}'
-```
-
-Then in `~/.config/herdr-app/layouts/diagrams.json`, on the `{"tab":"active"}` block's `"pane"`, add:
-
-```json
-"header": { "content": { "mod": "diagram-pane" }, "height": 22, "position": "top", "reveal": "always" }
-```
-
-Without it the canvas still works; only the badge is missing.
-
 ## Use
 
 Agents do this for you once the skill is installed. By hand, in any terminal inside Herdr:

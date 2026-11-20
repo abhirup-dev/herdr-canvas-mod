@@ -13,9 +13,7 @@ import { div, View } from "gpui-kit";
 import {
   appHome,
   checking,
-  exec,
   home,
-  machines,
   openOverlay,
   panes,
   props,
@@ -96,30 +94,10 @@ const log = modLogger("diagram-pane");
 /** Element ids from pane ids: a remote pane's id has a slash ("vpsme/p95b..."). */
 const safeId = (id) => String(id).replace(/[^A-Za-z0-9_-]/g, "_");
 
-/**
- * Once per app run: when Herdr has other machines (`hc machine add`), start the sidecar, which follows their
- * terminals (a remote agent's canvas or pins show here). All header instances share one JS realm.
- */
-function startSidecarForRemotes(cx) {
-  if (globalThis.__herdrDrawRemotes || checking()) return;
-  globalThis.__herdrDrawRemotes = true;
-  cx.spawn(async () => {
-    const names = machines()
-      .map((m) => m.name)
-      .filter(Boolean);
-    log(`app start: machines ${names.join(", ") || "none"}${names.length ? ", starting the sidecar" : ""}`);
-    if (names.length)
-      await exec(`${home()}/.local/bin/herdr-draw`, ["canvas", "start"]).catch((e) =>
-        log(`sidecar start failed: ${e}`),
-      );
-  });
-}
-
 export default class Pane extends View {
   init(_props, cx) {
     this.state = null;
     this.unlog = log.use(cx);
-    startSidecarForRemotes(cx);
     const terminal = props()?.terminal;
     if (!terminal) return;
     const root = `${appHome()}/${DATA}`;
@@ -175,11 +153,9 @@ export default class Pane extends View {
         cx.stop_propagation();
         log(`canvas badge clicked on ${terminal} (pane ${pane}): ${open ? "closing" : "opening"} the canvas`);
         if (open) return run("pane.close", { pane: open.pane });
-        cx.spawn(async () => {
-          await exec(`${home()}/.local/bin/herdr-draw`, ["canvas", "start"]).catch(() => null);
-          // The agent's own board (a remote one is machine-qualified, vpsme/t1f); the sidecar's default port.
-          run("pane.split", { pane, direction: "right", mod: "excal-canvas", props: { board: terminal, port: 3077 } });
-        });
+        // The agent's own board (a remote one is machine-qualified, vpsme/t1f) on the sidecar, which runs on its own
+        // (a login item from herdr-draw install); the canvas shows its connection state if it doesn't.
+        run("pane.split", { pane, direction: "right", mod: "excal-canvas", props: { board: terminal, port: 3077 } });
       })
       .child("✎ canvas");
   }
