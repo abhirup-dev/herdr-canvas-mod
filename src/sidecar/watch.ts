@@ -1,5 +1,5 @@
-// On the main machine (the one running the Herdr app): follows terminals on the machines `herdr-draw install`
-// synced, through `hc events`. An agent there labels its own terminal (cli/lib/canvas.mjs signal):
+// On the main machine (the one running the Herdr app): follows terminals on every machine hc knows
+// (`hc machine add`), through `hc events`; however herdr-draw got onto that machine. An agent there labels its own terminal (cli/lib/canvas.mjs signal):
 //   herdr-draw.canvas=<time>  open the canvas beside that terminal here
 //   herdr-draw.pins=<time>    it pinned Mermaid diagrams: mirror them here (kept followed from then on)
 // The relay dials a machine only when one of these first needs it.
@@ -21,36 +21,21 @@ type HcLine = {
   params?: { type?: string; terminal?: string; data?: { labels?: Labels } };
 };
 
-/** Machines `herdr-draw install` synced, from its state file in the app home; none: nothing to follow. */
-export function syncedMachines(home = appHome()): string[] {
-  try {
-    const s = JSON.parse(fs.readFileSync(path.join(home, "data/herdr-draw/install.json"), "utf8"));
-    return Object.keys(s.machines ?? {});
-  } catch {
-    return [];
-  }
-}
-
 const PIN_TYPES = new Set(["pins", "pin", "unpin"]);
 
 export class RemoteWatch {
   readonly #canvas = new Map<string, string>();
   readonly #mirrors = new Map<string, PinMirror>();
-  readonly #machines: Set<string>;
-
   constructor(
-    machines: readonly string[],
     private readonly relay: Relay,
     private readonly port: number,
     private readonly log: Log,
     private readonly home = appHome(),
-  ) {
-    this.#machines = new Set(machines);
-  }
+  ) {}
 
+  /** A terminal on another machine: `hc events` only reports machines hc was given, so that is the allowlist. */
   #ours(address: string | undefined): address is string {
-    const machine = address?.split("/")[0];
-    return Boolean(address?.includes("/") && machine && this.#machines.has(machine));
+    return Boolean(address?.includes("/"));
   }
 
   /** One `hc events` line: the first is a snapshot of every terminal, then events. */
@@ -138,6 +123,6 @@ export class RemoteWatch {
       });
     };
     run();
-    this.log(`following machines: ${[...this.#machines].join(", ")}`);
+    this.log("following terminals on every hc machine");
   }
 }

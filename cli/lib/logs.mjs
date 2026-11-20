@@ -1,5 +1,5 @@
 // herdr-draw logs: the last lines of every component's log (cli, sidecar, endpoint, install, mods), merged by time,
-// here or on a synced machine. Files: src/log/log.mjs.
+// here or on another machine. Files: src/log/log.mjs.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -14,7 +14,7 @@ usage: herdr-draw logs [component] [-n lines] [--machine name] [--path]
 
   component         cli, sidecar, endpoint, install, mod (all mods), mod-excal-canvas, ... (default: all)
   -n LINES          lines per component (default 100)
-  --machine NAME    read them on a synced machine instead (over hc)
+  --machine NAME    read them on another machine instead (over hc)
   --path            only print where the logs are
   help, -h, --help  this text
 
@@ -29,7 +29,7 @@ export function program() {
   cli
     .command("[component]")
     .option("-n <lines>", "lines per component")
-    .option("--machine <name>", "a synced machine")
+    .option("--machine <name>", "another machine")
     .option("--path", "only the log folders");
   return cli;
 }
