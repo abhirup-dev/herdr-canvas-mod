@@ -1,7 +1,8 @@
 # Herdr Canvas Mod
 
-Diagrams beside the coding agent that drew them, in the [Herdr](https://herdr.dev) desktop app.
-Agents run one CLI, `herdr-draw`, to pin Mermaid diagrams to their pane and to draw on a live Excalidraw canvas you can edit too.
+Collaborate better with your coding agents using Mermaid and Excalidraw diagrams, right in the native
+[Herdr](https://herdr.dev) app. Agents run one CLI, `herdr-draw`, to pin Mermaid diagrams to their pane and to draw
+on a live Excalidraw canvas you can edit too.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/canvas-dark.jpg">
@@ -26,13 +27,6 @@ On the machine that runs the Herdr app (Herdr 0.1.16 or newer; bun is installed 
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/abhirup-dev/herdr-canvas-mod/main/install.sh | sh
-```
-
-It asks which agents get the skill and which of your other machines to set up. Or install on a remote machine
-itself; your app picks it up:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/abhirup-dev/herdr-canvas-mod/main/install.sh | sh -s -- -y --headless --agents claude
 ```
 
 **One manual step, for the badge.** The pane header comes from the layout, and shipped layouts are read-only.
