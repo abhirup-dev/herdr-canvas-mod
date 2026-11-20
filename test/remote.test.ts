@@ -85,7 +85,7 @@ describe("following remote terminals", () => {
   function watch() {
     const relay = new FakeRelay();
     const home = tmpHome();
-    const w = new RemoteWatch(["vpsme"], relay as unknown as Relay, 3077, () => {}, home);
+    const w = new RemoteWatch(relay as unknown as Relay, 3077, () => {}, home);
     const opened: string[] = [];
     w.openCanvas = (a) => void opened.push(a);
     return { w, relay, opened, home };
@@ -102,14 +102,14 @@ describe("following remote terminals", () => {
     expect(opened).toEqual(["vpsme/t1f"]);
   });
 
-  test("pins are followed once, and only on synced machines", () => {
+  test("pins are followed once, on any other machine, never for local terminals", () => {
     const { w, relay, home } = watch();
     w.onLine(event("vpsme/t1f", { "herdr-draw.pins": "1" }));
     w.onLine(event("vpsme/t1f", { "herdr-draw.pins": "2" }));
     w.onLine(event("other/t1", { "herdr-draw.pins": "1" }));
     w.onLine(event("t3", { "herdr-draw.pins": "1" }));
     w.onLine("not json");
-    expect(relay.subs).toEqual(["vpsme/t1f"]);
+    expect(relay.subs).toEqual(["vpsme/t1f", "other/t1"]);
     const pins: PinMessage = { type: "pins", pins: [{ id: "d1", title: "x", svg: "<svg/>", source: "a", updated: 0 }] };
     relay.viewers[0]?.send(JSON.stringify({ kind: "board", board: "vpsme/t1f", msg: pins }));
     expect(fs.existsSync(path.join(home, "data/herdr-agent-diagram/vpsme/t1f/state.json"))).toBe(true);

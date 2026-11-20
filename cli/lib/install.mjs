@@ -25,7 +25,7 @@ const AGENTS = {
   pi: { bin: "pi", skills: ".pi/agent/skills" },
   codex: { bin: "codex", skills: ".codex/skills" },
 };
-/** Where a synced machine keeps its copy (same layout as the bootstrap's clone). */
+/** Where a pushed copy lives on another machine (same layout as the bootstrap's clone). */
 const REMOTE_DIR = ".local/share/herdr-draw";
 
 export const HELP = `herdr-draw install: set up herdr-draw on this machine and, if you choose, on your other machines.
@@ -36,8 +36,8 @@ usage: herdr-draw install [-y] [--agents claude,pi,codex | --agents none] [--mac
        herdr-draw --version
 
   install             the CLI (~/.local/bin/herdr-draw), the mods and the skills here; then, if chosen, other machines
-  uninstall           remove them here and from the synced machines (or only the --machines given)
-  doctor              check the setup here and on synced machines; exits 1 if something is missing
+  uninstall           remove them here; asks about each other machine that has herdr-draw (-y: only --machines)
+  doctor              check the setup here and on every connected machine that has herdr-draw; exits 1 on a problem
   -y, --yes           no questions: every detected agent, and every connected machine unless --machines/--no-machines
   --agents LIST       which agents get the skills (claude, pi, codex; default: the ones found); none for no skills
   --machines LIST     other machines (hc machine ls) that get the CLI and skills, so agents there can draw;
@@ -45,6 +45,9 @@ usage: herdr-draw install [-y] [--agents claude,pi,codex | --agents none] [--mac
   --no-machines       only this machine
   --headless          (used on other machines) CLI and skills only, no Herdr app here
   -V, --version       print the version (doctor compares it across machines)
+
+Other machines are the ones Herdr knows (hc machine ls). One that has herdr-draw, pushed from here or
+installed there with install.sh --headless, shows its agents' canvases and pins in this Herdr app.
 `;
 
 // ---------- small helpers ----------
@@ -262,6 +265,15 @@ function packTar() {
   return execFileSync("tar", ["-czf", "-", "-C", SRC, ...files], { maxBuffer: 256 << 20 });
 }
 
+/** herdr-draw's version on machine m, "" when it has none (or can't be reached). */
+function remoteVersion(m) {
+  try {
+    return onMachine(m, `"$HOME/.local/bin/herdr-draw" --version 2>/dev/null || true`, { timeout: 30 }).trim();
+  } catch {
+    return "";
+  }
+}
+
 const remoteAgents = (m) =>
   Object.keys(AGENTS).filter((a) =>
     onMachine(
@@ -348,9 +360,8 @@ async function install(o, env) {
     if (!process.env.PATH?.split(":").includes(binDir())) say(`  note    add ${binDir()} to your PATH`);
     if (o.headless) return;
 
-    const prev = loadState(env)?.machines ?? {};
     const machines = await chooseMachines(o, ask);
-    const synced = { ...prev };
+    const synced = [];
     for (const m of machines) {
       try {
         const there = remoteAgents(m);
@@ -358,14 +369,14 @@ async function install(o, env) {
           ? await ask.pick(`Skills on ${m} for which agents?`, Object.keys(AGENTS), there)
           : (o.agents ?? there);
         await syncMachine(m, chosen, ask);
-        synced[m] = { agents: chosen, version: VERSION, synced: new Date().toISOString() };
+        synced.push(m);
       } catch (e) {
         say(`  ${e.message}`);
       }
     }
-    saveState(env, { version: VERSION, src: SRC, agents, machines: synced });
+    saveState(env, { version: VERSION, src: SRC, agents });
     say(
-      `\ndone. ${Object.keys(synced).length ? `Synced machines: ${Object.keys(synced).join(", ")}. ` : ""}Agents use it through the skills; check with: herdr-draw doctor`,
+      `\ndone. ${synced.length ? `Synced machines: ${synced.join(", ")}. ` : ""}Agents use it through the skills; check with: herdr-draw doctor`,
     );
   } finally {
     ask?.close();
@@ -387,15 +398,22 @@ function removeLocal(env, headless) {
 }
 
 async function uninstall(o, env) {
-  const machines = o.machines ?? Object.keys(loadState(env)?.machines ?? {});
   const ask = asker(o.yes);
+  // Named machines, or (asking first) every connected one that has herdr-draw; -y alone touches only this one.
+  const machines =
+    o.machines ??
+    (ask && !o.headless
+      ? listMachines()
+          .map((m) => m.name)
+          .filter(remoteVersion)
+      : []);
   try {
     for (const m of machines) {
       if (ask && !(await ask.yesNo(`Remove herdr-draw from ${m} too?`))) continue;
       try {
         onMachine(
           m,
-          `${REMOTE_BUN}; "$B" "$HOME/${REMOTE_DIR}/cli/herdr-draw.mjs" uninstall -y --headless && rm -rf "$HOME/${REMOTE_DIR}" "$HOME/${PRIVATE_BUN}"`,
+          `"$HOME/.local/bin/herdr-draw" uninstall -y --headless && rm -rf "$HOME/${REMOTE_DIR}" "$HOME/${PRIVATE_BUN}"`,
         );
         say(`${m}: removed`);
       } catch (e) {
@@ -422,13 +440,10 @@ function doctor(env) {
   for (const a of state?.agents ?? detectAgents())
     for (const s of SKILLS)
       check(`${a} skill ${s}`, fs.existsSync(path.join(HOME, AGENTS[a].skills, s, "SKILL.md")), "herdr-draw install");
-  for (const [m, info] of Object.entries(state?.machines ?? {})) {
-    let v = "";
-    try {
-      v = onMachine(m, `"$HOME/.local/bin/herdr-draw" --version`, { timeout: 30 }).trim();
-    } catch {}
-    const label = `${m}: herdr-draw ${v || "missing"} (skills: ${info.agents.join(", ") || "none"})`;
-    check(label, v === VERSION, `herdr-draw install --machines ${m}`);
+  for (const { name: m } of listMachines()) {
+    const v = remoteVersion(m);
+    if (!v) rows.push(`--   ${m}: no herdr-draw (agents there can't draw; herdr-draw install --machines ${m})`);
+    else check(`${m}: herdr-draw ${v}`, v === VERSION, `herdr-draw install --machines ${m}, or update it there`);
   }
   say(rows.join("\n"));
   if (rows.some((r) => r.startsWith("FAIL"))) process.exitCode = 1;

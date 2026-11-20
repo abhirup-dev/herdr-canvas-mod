@@ -17,7 +17,7 @@ import { type RawElement, stableSeed, withSeeds } from "./diff.ts";
 import { appHome, servePins } from "./pins.ts";
 import { Relay } from "./relay.ts";
 import { BoardSaver, boardsDir } from "./save.ts";
-import { RemoteWatch, syncedMachines } from "./watch.ts";
+import { RemoteWatch } from "./watch.ts";
 
 const port = Number(process.env.CANVAS_SIDECAR_PORT ?? SIDECAR_PORT);
 const log = logger("sidecar");
@@ -108,5 +108,4 @@ Bun.serve({
   },
 });
 log(`${SIDECAR_SERVICE} on http://127.0.0.1:${port} (boards at /b/<board>/api, mods at ws://127.0.0.1:${port}/)`);
-const machines = syncedMachines();
-if (machines.length) new RemoteWatch(machines, relay, port, log).start();
+new RemoteWatch(relay, port, log).start();

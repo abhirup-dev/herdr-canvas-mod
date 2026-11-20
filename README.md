@@ -39,11 +39,15 @@ Nothing is installed on another machine unless you pick it. A synced machine get
 `~/.local/share/herdr-draw-bun`). Agents there draw as usual: their canvas opens beside them in this app,
 and their pinned diagrams show in the same badge and popup, over a link opened on first use.
 
+Or install it on the other machine itself (no Herdr app there):
+`curl -fsSL .../install.sh | sh -s -- -y --headless --agents claude`. Either way, the app follows every
+machine Herdr knows (`hc machine add`, or Add machine in the app); there is no list to keep.
+
 ```sh
 herdr-draw install -y --agents claude,pi --machines vpsme   # no questions (agents, scripts)
 herdr-draw install --machines vpsme                          # add or update one machine later
-herdr-draw doctor                                            # check this machine and synced ones
-herdr-draw uninstall                                         # remove (asks about synced machines)
+herdr-draw doctor                                            # check this machine and every machine with herdr-draw
+herdr-draw uninstall                                         # remove (asks about each machine that has it)
 ```
 
 The badge needs a layout whose pane header is `diagram-pane`. Shipped layouts
@@ -133,7 +137,7 @@ Every part writes a log, with debug lines on by default for now (`HERDR_DRAW_DEB
 | `~/.config/herdr-app/data/herdr-draw/logs/` | `mod-excal-canvas`, `mod-diagram-pane`, `mod-diagram-popup` (mods can only write under the app home) |
 | `~/.local/state/herdr-draw/boards/` | each board saved as `<board>.excalidraw`; restore with `herdr-draw canvas import <file> --replace` |
 
-`herdr-draw logs [component] [-n N]` merges them by time; `--machine vpsme` reads a synced machine's logs over hc.
+`herdr-draw logs [component] [-n N]` merges them by time; `--machine vpsme` reads another machine's logs over hc.
 For a remote board, read both sides: the laptop's `sidecar` (`relay:` and `bridge vpsme:` lines) and the machine's
 `endpoint` (`<-` frames in, `->` frames out) and `sidecar`.
 

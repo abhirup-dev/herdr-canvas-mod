@@ -1,6 +1,6 @@
 // Boards on other machines (ids like "vpsme/t1f"): the sidecar relays them through one Bridge per machine
 // (src/bridge), opened on the first subscribe and kept while anyone follows a board there. The remote end is
-// `herdr-draw bridge endpoint`, which `herdr-draw install --machines` put on that machine.
+// `herdr-draw bridge endpoint`, from any herdr-draw install on that machine (native or `install --machines`).
 import { hostname } from "node:os";
 import { Bridge, hcLinkArgv, spawnPty } from "../bridge/bridge.ts";
 import type { BoardServerMessage } from "../bridge/protocol.ts";

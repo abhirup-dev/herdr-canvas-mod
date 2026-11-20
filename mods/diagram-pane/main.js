@@ -15,6 +15,7 @@ import {
   checking,
   exec,
   home,
+  machines,
   openOverlay,
   panes,
   props,
@@ -96,19 +97,18 @@ const log = modLogger("diagram-pane");
 const safeId = (id) => String(id).replace(/[^A-Za-z0-9_-]/g, "_");
 
 /**
- * Once per app run: when `herdr-draw install` synced other machines, start the sidecar, which follows their
+ * Once per app run: when Herdr has other machines (`hc machine add`), start the sidecar, which follows their
  * terminals (a remote agent's canvas or pins show here). All header instances share one JS realm.
  */
 function startSidecarForRemotes(cx) {
   if (globalThis.__herdrDrawRemotes || checking()) return;
   globalThis.__herdrDrawRemotes = true;
   cx.spawn(async () => {
-    const text = await readTextFile(`${appHome()}/data/herdr-draw/install.json`);
-    const machines = Object.keys((text && JSON.parse(text).machines) || {});
-    log(
-      `app start: synced machines ${machines.join(", ") || "none"}${machines.length ? ", starting the sidecar" : ""}`,
-    );
-    if (machines.length)
+    const names = machines()
+      .map((m) => m.name)
+      .filter(Boolean);
+    log(`app start: machines ${names.join(", ") || "none"}${names.length ? ", starting the sidecar" : ""}`);
+    if (names.length)
       await exec(`${home()}/.local/bin/herdr-draw`, ["canvas", "start"]).catch((e) =>
         log(`sidecar start failed: ${e}`),
       );
