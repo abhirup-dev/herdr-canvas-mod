@@ -72,6 +72,15 @@ For editable diagrams, put Mermaid into a named block with `herdr-draw canvas bl
 The [structured diagram guide](../skills/herdr-canvas-mod/references/visual-formats-structured.md)
 shows guarded revisions and native edits on the same board.
 
+### The sidecar at login
+
+On macOS, `herdr-draw install` adds `~/Library/LaunchAgents/dev.herdr-draw.sidecar.plist`: `herdr-draw canvas start` at
+login and every minute (a no-op while it is up; output in `logs/login.out`). Other machines' canvases and pins need
+the sidecar here; no mod starts it. `herdr-draw doctor` checks it is loaded.
+
+Install also shows the `◫` badge in a copy of the active layout, `<layout>-diagrams`. The badge is optional:
+without it, `herdr-app do mod.open --name diagram-popup` opens the pins and `herdr-draw canvas open` the canvas.
+
 ### Upgrading a running sidecar
 
 An older sidecar can continue to serve existing boards after an install. Export any live boards you

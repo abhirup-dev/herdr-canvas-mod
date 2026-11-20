@@ -213,6 +213,137 @@ export const loadState = (env) => {
   }
 };
 
+// ---------- the sidecar at login ----------
+// Other machines' canvases and pins reach this app through the sidecar here (src/sidecar/watch.ts), so it must run
+// whether or not any mod is shown: a LaunchAgent runs `herdr-draw canvas start` (a no-op while it is up) at login
+// and every minute.
+
+const SIDECAR_ENV = [
+  "PATH",
+  "HERDR_APP_HOME",
+  "CANVAS_SIDECAR_PORT",
+  "HERDR_DRAW_BUN",
+  "HERDR_DRAW_LOGS",
+  "HERDR_DRAW_BOARDS",
+];
+/** One agent per sidecar port, so a second instance (another port) doesn't replace the main one. */
+const agentLabel = (env) =>
+  `dev.herdr-draw.sidecar${env.CANVAS_SIDECAR_PORT && env.CANVAS_SIDECAR_PORT !== "3077" ? `.${env.CANVAS_SIDECAR_PORT}` : ""}`;
+const agentPlist = (env) => path.join(HOME, "Library/LaunchAgents", `${agentLabel(env)}.plist`);
+const xmlText = (v) => String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const launchctl = (...args) => spawnSync("launchctl", args, { encoding: "utf8" });
+
+/** Returns the plist path, or null where there is no launchd. */
+function installLoginItem(env) {
+  // shortcut: macOS only; on Linux the badge or a canvas open starts the sidecar. Add a systemd user unit if needed.
+  if (process.platform !== "darwin") return null;
+  const label = agentLabel(env);
+  const vars = SIDECAR_ENV.filter((k) => env[k])
+    .map((k) => `    <key>${k}</key><string>${xmlText(env[k])}</string>`)
+    .join("\n");
+  const out = xmlText(path.join(env.HERDR_DRAW_LOGS ?? path.join(HOME, ".local/state/herdr-draw/logs"), "login.out"));
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key>
+  <array><string>${xmlText(path.join(binDir(), "herdr-draw"))}</string><string>canvas</string><string>start</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+${vars}
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>60</integer>
+  <key>AbandonProcessGroup</key><true/>
+  <key>StandardOutPath</key><string>${out}</string>
+  <key>StandardErrorPath</key><string>${out}</string>
+</dict>
+</plist>
+`;
+  const file = agentPlist(env);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, plist);
+  const domain = `gui/${process.getuid()}`;
+  launchctl("bootout", `${domain}/${label}`);
+  const r = launchctl("bootstrap", domain, file);
+  if (r.status !== 0) throw new Error(`launchctl bootstrap ${file}: ${(r.stderr || r.stdout).trim()}`);
+  return file;
+}
+
+function removeLoginItem(env) {
+  if (process.platform !== "darwin") return;
+  launchctl("bootout", `gui/${process.getuid()}/${agentLabel(env)}`);
+  fs.rmSync(agentPlist(env), { force: true });
+}
+
+const loginItemLoaded = (env) => launchctl("print", `gui/${process.getuid()}/${agentLabel(env)}`).status === 0;
+
+// ---------- the badge layout ----------
+// The ◫ badge is a pane header, which comes from the layout. It is optional: pins (mod.open diagram-popup) and
+// canvases work without it. Install shows it in a copy of the active layout, <name>-diagrams.
+
+const BADGE_HEADER = { content: { mod: "diagram-pane" }, height: 22, position: "top", reveal: "always" };
+const layoutsDir = (env) => path.join(appHome(env), "layouts");
+const showsBadge = (layout) => JSON.stringify(layout).includes('"diagram-pane"');
+
+/** The open window's layout name, or null when the app isn't running here. */
+function activeLayout(env) {
+  try {
+    return JSON.parse(
+      execFileSync("herdr-app", ["status"], { env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }),
+    ).layout;
+  } catch {
+    return null;
+  }
+}
+
+/** Sets every terminal pane's header to the badge (a header another mod draws is left alone). True if one changed. */
+export function withBadge(node) {
+  let changed = false;
+  const walk = (n) => {
+    if (!n || typeof n !== "object") return;
+    if (n.pane && typeof n.pane === "object" && (!n.pane.header || n.pane.header.content?.mod === "pane")) {
+      n.pane.header = { ...BADGE_HEADER };
+      changed = true;
+    }
+    for (const v of Object.values(n)) walk(v);
+  };
+  walk(node);
+  return changed;
+}
+
+/** Returns a line for the summary. Never throws: the badge is a nicety. */
+function badgeLayout(env) {
+  const open = activeLayout(env);
+  const base = open ?? "main";
+  try {
+    const read = (n) => JSON.parse(fs.readFileSync(path.join(layoutsDir(env), `${n}.json`), "utf8"));
+    if (showsBadge(read(base))) return `${base} already shows it`;
+    const name = base.endsWith("-diagrams") ? base : `${base}-diagrams`;
+    const file = path.join(layoutsDir(env), `${name}.json`);
+    if (!fs.existsSync(file) || !showsBadge(read(name))) {
+      const copy = read(base);
+      if (!withBadge(copy)) return `${base} has its own pane header; set it to diagram-pane by hand (README)`;
+      fs.writeFileSync(file, `${JSON.stringify(copy, null, 2)}\n`);
+    }
+    if (!open) return `${name} (open Herdr and pick it: cmd-shift-l)`;
+    execFileSync("herdr-app", ["do", "layout.switch", "--name", name], { env, stdio: "ignore" });
+    return `${name}, switched to`;
+  } catch (e) {
+    return `skipped (${e.message.split("\n")[0]})`;
+  }
+}
+
+/** Uninstall: leave a -diagrams layout for its base, so headers don't point at a removed mod. */
+function leaveBadgeLayout(env) {
+  const open = activeLayout(env);
+  if (!open?.endsWith("-diagrams")) return;
+  const base = open.slice(0, -"-diagrams".length);
+  if (fs.existsSync(path.join(layoutsDir(env), `${base}.json`)))
+    spawnSync("herdr-app", ["do", "layout.switch", "--name", base], { env, stdio: "ignore" });
+}
+
 // ---------- other machines ----------
 
 const hcJson = (args) => JSON.parse(execFileSync("hc", [...args, "--json"], { encoding: "utf8" }));
@@ -355,6 +486,14 @@ async function install(o, env) {
     if (!o.headless) {
       installMods(env, bun);
       say(`  mods    ${MODS.join(", ")} -> ${path.join(appHome(env), "mods")}`);
+      try {
+        const item = installLoginItem(env);
+        say(`  sidecar ${item ? `starts at login (${item})` : "starts with the badge or a canvas open"}`);
+      } catch (e) {
+        say(`  sidecar not set to start at login: ${e.message}`);
+      }
+      if (!ask || (await ask.yesNo("Show a ◫ badge for pinned diagrams in pane headers (a copy of your layout)?")))
+        say(`  badge   ${badgeLayout(env)}`);
     }
     say(`  skills  ${linkSkills(agents).join(", ") || "none"}`);
     if (!process.env.PATH?.split(":").includes(binDir())) say(`  note    add ${binDir()} to your PATH`);
@@ -393,6 +532,8 @@ function removeLocal(env, headless) {
     }
   }
   if (headless) return;
+  removeLoginItem(env);
+  leaveBadgeLayout(env);
   for (const m of MODS) fs.rmSync(path.join(appHome(env), "mods", m), { recursive: true, force: true });
   fs.rmSync(stateFile(env), { force: true });
 }
@@ -435,6 +576,17 @@ function doctor(env) {
   check("bun", Boolean(bunPath()));
   check("hc (herdr-core)", has("hc"), "install Herdr");
   check("herdr-draw on PATH", has("herdr-draw"), `add ${binDir()} to PATH`);
+  if (process.platform === "darwin") check("sidecar starts at login", loginItemLoaded(env), "herdr-draw install");
+  const layout = activeLayout(env);
+  if (layout) {
+    let shown = false;
+    try {
+      shown = showsBadge(JSON.parse(fs.readFileSync(path.join(layoutsDir(env), `${layout}.json`), "utf8")));
+    } catch {}
+    rows.push(
+      `${shown ? "ok  " : "--  "} badge in layout ${layout}${shown ? "" : " (optional; herdr-draw install adds it)"}`,
+    );
+  }
   for (const m of MODS)
     check(`mod ${m}`, fs.existsSync(path.join(appHome(env), "mods", m, "main.js")), "herdr-draw install");
   for (const a of state?.agents ?? detectAgents())
